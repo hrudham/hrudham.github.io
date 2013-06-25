@@ -194,53 +194,7 @@ Selectioner.Settings =
 	emptyOptionText: 'None',
 	maxAutoCompleteItems: 5
 };
-// this provides some basic keyboard integration. Since non-input 
-// elements without a tab-index attribute do not trigger key-related
-// events, we catch them on the document level and then feed them
-// down to any currently visible or focused selectioners.
-var keyboardReceiver = Selectioner.Core.KeyboardReceiver = function() { };
-
-keyboardReceiver.prototype.onKeyDown = function(key, event)
-{
-	// This method should typically be overridden by 
-	// the prototypes that inherit from this prototype.
-};
-
-keyboardReceiver.prototype.getKeyboardFocus = function()
-{
-	keyboardReceiver._currentReceiver = this;
-};
-
-keyboardReceiver.prototype.removeKeyboardFocus = function()
-{
-	if (keyboardReceiver._currentReceiver === this)
-	{
-		keyboardReceiver._currentReceiver = null;
-	}
-};
-
-$(document)
-	.off('keydown.selectioner')
-	.on
-	(
-		'keydown.selectioner',
-		function(event)
-		{
-			if (keyboardReceiver._currentReceiver)
-			{
-				keyboardReceiver._currentReceiver.onKeyDown
-					(
-						event.which || event.keyCode,
-						event
-					);
-			}
-		}
-	);
-
-
 var Popup = function() {};
-
-Popup.prototype = new Selectioner.Core.KeyboardReceiver();
 
 Popup.prototype.initialize = function(selectioner)
 {
@@ -256,7 +210,21 @@ Popup.prototype.initialize = function(selectioner)
 				visibility: 'hidden',
 				position: 'absolute',
 				zIndex: '-1'
-			});
+			})
+		.on
+			(
+				'mousedown focusin',
+				function(event)
+				{
+					// The selectioner watches for mouse-down / focusin events outside of 
+					// itself in order to know when to close. Sometimes, however, these
+					// event will occur insides the popup and cause a re-render,
+					// and thus the element that caused the event no longer exists.
+					// This means we cannot determine if it exists inside or outside
+					// the popup. Thus, we stop propagation of these events here.
+					event.stopPropagation();
+				}
+			);
 
 	this.update();
 	
@@ -269,16 +237,19 @@ Popup.prototype.initialize = function(selectioner)
 		.on
 		(
 			'change',
-			function()
+			function(event, data)
 			{
-				if (popup.isShown())
+				if (!data || data.source !== 'selectioner')
 				{
-					popup.update();
-					popup.reposition();
+					if (popup.isShown())
+					{
+						popup.update();
+						popup.reposition();
+					}
 				}
 			}
 		);
-	
+			
 	$('body').append(this.element);
 };
 
@@ -361,7 +332,7 @@ Popup.prototype.reposition = function()
 	{
 		this.element.addClass('below');
 	}
-
+	
 	this.element.css
 	({
 		width: width + 'px',
@@ -373,7 +344,9 @@ Popup.prototype.reposition = function()
 // Shows the pop-up.
 Popup.prototype.show = function()
 {
-	if (!this.selectioner.display.isDisabled() && !this.selectioner.display.isReadOnly())
+	if (!this.selectioner.display.isDisabled() && 
+		!this.selectioner.display.isReadOnly() && 
+		!this.isShown())
 	{
 		// Hide the popup any time the window resizes.
 		var popup = this;
@@ -395,7 +368,7 @@ Popup.prototype.show = function()
 			var popUpHeight = this.element.height();
 			
 			this.reposition();
-
+			
 			this.element.css({ visibility: 'visible', zIndex: '' });
 			
 			if (popUpHeight != this.element.height())
@@ -406,6 +379,15 @@ Popup.prototype.show = function()
 				this.reposition();
 			}
 			
+			if (this.element.hasClass('above'))
+			{
+				this.previous();
+			}
+			else
+			{
+				this.next();
+			}
+						
 			this.selectioner.trigger('show.selectioner');
 		}
 	}
@@ -430,29 +412,109 @@ Popup.prototype.isShown = function()
 	return this._isVisible;
 };
 
-keyboardReceiver.prototype.onKeyDown = function(key, event)
+Popup.prototype.next = function()
+{
+	var canMove = false;
+	
+	if (!this.currentDialogIndex)
+	{
+		this.currentDialogIndex = 0;
+	}
+		
+	while (!canMove)
+	{
+		canMove = this.dialogs[this.currentDialogIndex].next();
+		
+		if (!canMove)
+		{
+			if (this.currentDialogIndex < this.dialogs.length - 1)
+			{
+				this.currentDialogIndex++;
+			}
+			else
+			{				
+				return false;
+			}
+		}
+	}
+	
+	return true;
+};
+
+Popup.prototype.previous = function()
+{
+	var canMove = false;
+	
+	if (!this.currentDialogIndex)
+	{
+		this.currentDialogIndex = this.dialogs.length - 1;
+	}
+		
+	while (!canMove)
+	{
+		canMove = this.dialogs[this.currentDialogIndex].previous();
+		
+		if (!canMove)
+		{
+			if (this.currentDialogIndex > 0)
+			{
+				this.currentDialogIndex--;
+			}
+			else
+			{				
+				return false;
+			}
+		}
+	}
+	
+	return true;
+};
+
+Popup.prototype.select = function()
+{
+	if (!this.currentDialogIndex)
+	{
+		this.currentDialogIndex = this.dialogs.length - 1;
+	}
+	
+	this.dialogs[this.currentDialogIndex].select();
+};
+
+Popup.prototype.onKeyDown = function(key, event)
 {
 	// Keyboard integration
-	switch(event.which || event.keyCode)
+	if (this.isShown() && event.target === this.selectioner.display.element[0])
 	{
-		case 27: // escape
-			this.hide();
-			this.selectioner.display.getKeyboardFocus();
-			break;
-		case 38: // up arrow
-			event.preventDefault();
-			this.hide();
-			break;
-		case 40: // down arrow
-			event.preventDefault();
-			this.show();
-			this.getKeyboardFocus();
-			break;
+		switch(key)
+		{
+			// Escape
+			case 27:
+				this.hide();
+				break;
+				
+			// Up arrow
+			case 38: 
+				event.preventDefault();
+				this.previous();
+				break;
+				
+			// Down arrow
+			case 40: 
+				event.preventDefault();
+				this.next();			
+				break;
+				
+			// Space
+			case 32:
+			// Enter / Return
+			case 13:
+				event.preventDefault();
+				this.select();
+				break;
+		}
 	}
 };
 var Display = Selectioner.Core.Display = function() {};
-
-Display.prototype = new Selectioner.Core.KeyboardReceiver();
 
 Display.prototype.initialize = function(selectioner)
 {
@@ -554,6 +616,20 @@ Display.prototype.createDisplay = function()
 					}
 				);
 	}
+	
+	// Watch for keydown events.
+	this.element.on
+		(
+			'keydown.selectioner',
+			function(event)
+			{
+				display.onKeyDown
+					(
+						event.which || event.keyCode,
+						event
+					);
+			}
+		);
 };
 
 // Create a new dialog for the underlying target element.
@@ -576,7 +652,6 @@ Display.prototype.createPopup = function()
 				function()
 				{
 					popup.show();
-					dialog.getKeyboardFocus();
 				}
 			)
 		.children()
@@ -596,14 +671,6 @@ Display.prototype.createPopup = function()
 						popup.show();
 					}
 				}
-			)
-		.on
-			(
-				'focusout',
-				function()
-				{
-					dialog.removeKeyboardFocus();
-				}
 			);
 
 	// Hide the pop-up whenever it loses focus to an
@@ -621,7 +688,6 @@ Display.prototype.createPopup = function()
 					!$.contains(popup.element[0], event.target))
 				{
 					popup.hide();
-					popup.removeKeyboardFocus();
 				}
 			}
 		);
@@ -697,21 +763,30 @@ Display.prototype.getNoSelectionText = function()
 
 Display.prototype.onKeyDown = function(key, event)
 {
-	// Keyboard integration
-	switch(event.which || event.keyCode)
+	// Only perform keyboard-related actions if they are directly 
+	// related to the display, and not a child element thereof.
+	if (event.target == this.element[0])
 	{
-		case 27: // escape
-			this.popup.hide();
-			break;
-		case 38: // up arrow
-			event.preventDefault();
-			this.popup.hide();
-			break;
-		case 40: // down arrow
-			event.preventDefault();
-			this.popup.show();
-			this.popup.getKeyboardFocus();
-			break;
+		if (this.popup.isShown())
+		{
+			this.popup.onKeyDown(key, event);
+		}
+		else
+		{
+			switch(key)
+			{
+				case 38: // Up arrow
+				case 40: // Down arrow
+				case 13: // Return / Enter
+					this.popup.show();
+					break;
+			}
+		}
+	}
+	else if (key === 27) 
+	{
+		// Escape key was pressed.
+		this.element.focus();
 	}
 };
 var Dialog = Selectioner.Core.Dialog = function() {};
@@ -752,6 +827,26 @@ Dialog.prototype.validateTarget = function()
 	// This may be ignored if no validation is required.
 };
 
+// In the case where a dialog displays a collection of child items,
+// override this method in order to move to the next item. Return
+// true if moving to the item was successful, and false if not.
+Dialog.prototype.next = function()
+{
+	return false;
+};
+
+// In the case where a dialog displays a collection of child items,
+// override this method in order to move to the previous item. Return
+// true if moving to the item was successful, and false if not.
+Dialog.prototype.previous = function()
+{
+	return false;
+};
+
+// Override this to select the currently highlighted option.
+Dialog.prototype.select = function()
+{
+};
 var ListBox = Selectioner.Display.ListBox = function() {};
 
 ListBox.prototype = new Selectioner.Core.Display();
@@ -1057,6 +1152,24 @@ SingleSelect.prototype.validateTarget = function()
 SingleSelect.prototype.render = function()
 {
 	this.element = $('<ul />');
+	
+	var dialog = this;
+	
+	var element = this.element
+		.on
+			(
+				'mouseenter',
+				'li',
+				function(event)
+				{
+					var target = dialog.getSelectableOptions().filter(this);
+					if (target.length > 0 && !target.hasClass('current'))
+					{
+						element.find('li').removeClass('current');
+						target.addClass('current');
+					}
+				}
+			);
 };
 
 SingleSelect.prototype.update = function()
@@ -1120,7 +1233,7 @@ SingleSelect.prototype.selectOption = function(option)
 {
 	option[0].selected = true;
 	this.popup.hide();
-	this.selectioner.target.trigger('change');
+	this.selectioner.target.trigger('change', { source: 'selectioner' });
 };
 
 // Render an the equivilant control that represents an 
@@ -1147,6 +1260,106 @@ SingleSelect.prototype.renderGroup = function(group)
 		);
 
 	return groupElement;
+};
+
+SingleSelect.prototype.getSelectableOptions = function()
+{
+	return this.element
+		.find('li')
+		.filter
+			(
+				function()
+				{ 
+					return $(this)
+						.children('a,input,label')
+						.filter(':not(.disabled,[disabled])').length > 0; 
+				}
+			);
+};
+
+SingleSelect.prototype.next = function()
+{
+	var items = this.getSelectableOptions();
+	
+	if (items.filter('.current').length === 0)
+	{
+		items.first().addClass('current');
+		return true;
+	}
+	else
+	{
+		for (var i = 0, length = items.length; i < length; i++)
+		{
+			var item = $(items[i]);
+			
+			if (item.hasClass('current'))
+			{
+				if (i < length - 1)
+				{
+					item.removeClass('current');
+					var currentItem = $(items[i + 1]).addClass('current');
+					
+					var maxScrollTop = currentItem.position().top + currentItem.height();
+					var height = this.popup.element.height();
+											
+					if (maxScrollTop > height)
+					{
+						this.popup.element.scrollTop(this.popup.element.scrollTop() + maxScrollTop - height);
+					}
+					
+					return true;
+				}
+				
+				return false;
+			}
+		}
+	}
+};
+
+SingleSelect.prototype.previous = function()
+{
+	var items = this.getSelectableOptions();
+	
+	if (items.filter('.current').length === 0)
+	{
+		items.last().addClass('current');
+		return true;
+	}
+	else
+	{
+		for (var i = 0, length = items.length; i < length; i++)
+		{
+			var item = $(items[i]);
+			
+			if (item.hasClass('current'))
+			{
+				if (i > 0)
+				{
+					item.removeClass('current');
+					var currentItem = $(items[i - 1]).addClass('current');
+					
+					var minScrollTop = currentItem.position().top;
+										
+					if (minScrollTop < 0)
+					{
+						this.popup.element.scrollTop(this.popup.element.scrollTop() + minScrollTop);
+					}
+					
+					return true;
+				}
+				
+				return false;
+			}
+		}
+	}
+};
+
+SingleSelect.prototype.select = function()
+{
+	var selectedItem = this.getSelectableOptions()
+		.filter('.current')
+		.find('a,label')
+		.trigger('click');
 };
 var MultiSelect = Selectioner.Dialog.MultiSelect = function() {};
 
@@ -1192,7 +1405,7 @@ MultiSelect.prototype.renderOption = function(option)
 			function() 
 			{
 				option[0].selected = this.checked;
-				selectioner.target.trigger('change');
+				selectioner.target.trigger('change', { source: 'selectioner' });
 			}
 		);
 		
@@ -1229,7 +1442,7 @@ MultiSelect.prototype.renderGroup = function(group)
 					}
 				);
 		
-		dialog.selectioner.target.trigger('change');
+		dialog.selectioner.target.trigger('change', { source: 'selectioner' });
 	};
 	
 	var groupTitle = $('<a />')
@@ -1280,7 +1493,7 @@ ComboSelect.prototype.renderOption = function(option)
 };
 var AutoComplete = Selectioner.Dialog.AutoComplete = function() {};
 
-AutoComplete.prototype = new Selectioner.Core.Dialog();
+AutoComplete.prototype = new Selectioner.Dialog.SingleSelect();
 
 AutoComplete.prototype.validateTarget = function()
 {
@@ -1294,6 +1507,8 @@ AutoComplete.prototype.validateTarget = function()
 // <option /> element for the underlying <select /> element. 
 AutoComplete.prototype.render = function()
 {
+	SingleSelect.prototype.render.apply(this, arguments);
+
 	this.textElement = this
 		.selectioner
 		.display
@@ -1304,8 +1519,7 @@ AutoComplete.prototype.render = function()
 	{
 		throw new Error('AutoComplete expects the Display to contain an <input type="text" /> element');
 	}
-
-	this.element = $('<ul />');
+	
 	this.update();
 	this._textValue = this.textElement.val();
 	
@@ -1384,22 +1598,65 @@ AutoComplete.prototype.update = function()
 		.empty()
 		.append(filteredOptions);
 };
-/*
-	Soem of this code was inspired by the DatePicker for Bootstrap plugin,
-	which can be found here: http://www.eyecon.ro/bootstrap-datepicker/
-*/
-
-var DateSelect = Selectioner.Dialog.DateSelect = function() {};
+var DateSelect = Selectioner.Dialog.DateSelect = function() {};
 
 DateSelect.prototype = new Selectioner.Core.Dialog();
 
 DateSelect.Settings = 
 {
-	dayNames: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
-	shortDayNames: ['S', 'M', 'T', 'W', 'T', 'F', 'S'],
-	monthNames: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
-	shortMonthNames: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sept', 'Oct', 'Nov', 'Dec'],
+	monthNames: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sept', 'Oct', 'Nov', 'Dec'],
 	weekStartIndex: 1
+};
+
+DateSelect.Utility = 
+{
+	isLeapYear: function(year)
+	{
+		return ((year % 4 === 0) && (year % 100 !== 0)) || (year % 400 === 0);
+	},
+	daysInMonth: function(year, month)
+	{
+		return [31, (DateSelect.Utility.isLeapYear(year) ? 29 : 28), 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month];
+	},
+	dateToString: function(date)
+	{
+		if (!date)
+		{
+			return null;
+		}
+	
+		var day = date.getDate().toString();
+		var month = (date.getMonth() + 1).toString();
+		var year = date.getFullYear().toString();
+		
+		if (day.length == 1) day = '0' + day;
+		if (month.length == 1) month = '0' + month;
+		
+		return year + '-' + month + '-' + day;
+	},
+	buildScroller: function(collection, currentValue)
+	{	
+		var buildItem = function(i)
+		{
+			var item = $('<a />')
+				.attr('href', 'javascript:;')
+				.append($('<span />').text(collection[i]));
+				
+			if (currentValue === collection[i])
+			{
+				item.addClass('current');
+			}
+				
+			return item;
+		};
+		
+		return $('<span />')
+			.append($('<a />').attr('href', 'javascript:;').addClass('up'))
+			.append(buildItem(0).addClass('previous'))
+			.append(buildItem(1).addClass('selected'))
+			.append(buildItem(2).addClass('next'))
+			.append($('<a />').attr('href', 'javascript:;').addClass('down'));
+	}
 };
 
 DateSelect.prototype.validateTarget = function()
@@ -1412,227 +1669,171 @@ DateSelect.prototype.validateTarget = function()
 
 DateSelect.prototype.render = function()
 {
+	var dateSelect = this;
+
 	this.element = $('<div />')
-		.addClass(Selectioner.Settings.cssPrefix + 'date');
+		.addClass(Selectioner.Settings.cssPrefix + 'date')
+		.on
+			(
+				'click',
+				'.days .previous, .days .up',
+				function()
+				{
+					dateSelect.addDays(-1);
+				}
+			)
+		.on
+			(
+				'click',
+				'.days .next, .days .down',
+				function()
+				{
+					dateSelect.addDays(1);
+				}
+			)
+		.on
+			(
+				'click',
+				'.months .previous, .months .up',
+				function()
+				{
+					dateSelect.addMonths(-1);
+				}
+			)
+		.on
+			(
+				'click',
+				'.months .next, .months .down',
+				function()
+				{
+					dateSelect.addMonths(1);
+				}
+			)
+		.on
+			(
+				'click',
+				'.years .previous, .years .up',
+				function()
+				{
+					dateSelect.addYears(-1);
+				}
+			)
+		.on
+			(
+				'click',
+				'.years .next, .years .down',
+				function()
+				{
+					dateSelect.addYears(1);
+				}
+			)
+		.on
+			(
+				'click',
+				'.selected',
+				function()
+				{
+					dateSelect.popup.hide();
+				}
+			)
+		.on
+			(
+				'click',
+				'.today',
+				function()
+				{
+					dateSelect.setCurrentDate(new Date());
+				}
+			)
+		.on
+			(
+				'click',
+				'.clear',
+				function()
+				{
+					dateSelect.setCurrentDate(null);
+					dateSelect.popup.hide();
+				}
+			);
 		
-	this.renderDays(this.getDate());
+	this.update();
 };
 
 DateSelect.prototype.update = function()
 {
-	this.renderDays(this.getDate());
-};
-
-DateSelect.prototype.renderDays = function(date)
-{		
-	var isLeapYear = function (year) 
-	{
-		return (((year % 4 === 0) && (year % 100 !== 0)) || (year % 400 === 0));
-	};
+	var currentDate = this.getCurrentDate();
 	
-	var getDaysInMonth = function (year, month) 
-	{
-		return [31, (isLeapYear(year) ? 29 : 28), 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month];
-	};
+	// Years
+	var currentYear = currentDate.getFullYear();
 	
-	var prevMonthDate = new Date(date.getFullYear(), date.getMonth() - 1, 28, 0, 0, 0, 0);
-	var day = getDaysInMonth(prevMonthDate.getFullYear(), prevMonthDate.getMonth());
-	prevMonthDate.setDate(day);
-	prevMonthDate.setDate(day - (prevMonthDate.getDay() - DateSelect.Settings.weekStartIndex + 7) % 7);
+	// Months
+	var monthNames = DateSelect.Settings.monthNames;
+	var currentMonth = currentDate.getMonth();
+	var previousMonth = currentMonth === 0 ? 11 : currentMonth - 1;
+	var nextMonth = currentMonth === 11 ? 0 : currentMonth + 1;
+	var months = 
+		[
+			monthNames[previousMonth],
+			monthNames[currentMonth],
+			monthNames[nextMonth]
+		];
 	
-	var nextMonthDate = new Date(prevMonthDate);
-	nextMonthDate.setDate(nextMonthDate.getDate() + 42);
-	nextMonthDate = nextMonthDate;
+	// Days
+	var currentDay = currentDate.getDate();
+	var previousDate = new Date(currentDate);
+	previousDate.setDate(currentDay - 1);
+	
+	var days = 
+		[
+			(currentDay === 1 ? previousDate.getDate() : currentDay - 1),
+			currentDay,
+			(currentDay === DateSelect.Utility.daysInMonth(currentYear, currentMonth)) ? 1 : currentDay + 1
+		];
 		
+	var today = new Date();
+	
+	var todayButton = $('<a />').attr('href', 'javascript:;')
+		.addClass('today')
+		.append($('<span />').text('Today'));
+		
+	var clearButton = $('<a />')
+		.attr('href', 'javascript:;')
+		.addClass('clear')
+		.append($('<span />').text('Clear'));
+	
+	// Build the control
 	this.element
 		.empty()
-		.append(this.renderHeader(date, nextMonthDate, prevMonthDate))
-		.append(this.renderBody(date, nextMonthDate, prevMonthDate));
+		.append(todayButton)
+		.append(DateSelect.Utility.buildScroller(days, today.getDate()).addClass('days'))
+		.append(DateSelect.Utility.buildScroller(months, monthNames[today.getMonth()]).addClass('months'))
+		.append(DateSelect.Utility.buildScroller([currentYear - 1, currentYear, currentYear + 1], today.getFullYear()).addClass('years'))
+		.append(clearButton);
 };
 
-DateSelect.prototype.renderBody = function(date, nextMonthDate, prevMonthDate)
+DateSelect.prototype.addDays = function(day)
 {
-	var dateSelect = this;
-
-	var thead = $('<thead />');
-	var headRow = $('<tr />');
-	
-	var dayNames = DateSelect.Settings.shortDayNames;
-	
-	for (var dayNameIndex = 0, dayNamesLength = dayNames.length; dayNameIndex < dayNamesLength; dayNameIndex++)
-	{
-		headRow.append($('<th />').text(dayNames[(dayNameIndex + DateSelect.Settings.weekStartIndex) % 7]));
-	}
-	thead.append(headRow);
-
-	var tbody = $('<tbody />');
-
-	// Find out what days we need to display.
-	var days = [];
-	var recursiveDate = new Date(prevMonthDate.valueOf());
-	var currentMonth = date.getMonth();
-	var today = this.getToday().valueOf();
-	var selectedDate = new Date(this.getDate().valueOf());
-	selectedDate.setHours(0);
-	selectedDate.setMinutes(0);
-	selectedDate.setSeconds(0);
-	selectedDate.setMilliseconds(0);
-	var selectedDateValue = selectedDate.valueOf();
-	
-	while (recursiveDate.valueOf() < nextMonthDate.valueOf()) 
-	{
-		var dateValue = recursiveDate.valueOf();
-		var dateOfMonth = recursiveDate.getDate();
-		var dayOfWeek = recursiveDate.getDay();
-		
-		days.push
-			({
-				name: dateOfMonth,
-				isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
-				isNextMonth: recursiveDate.getMonth() > currentMonth,
-				isPrevMonth: recursiveDate.getMonth() < currentMonth,
-				isToday: today === dateValue,
-				isSelected: selectedDateValue === dateValue,
-				dateValue: dateValue
-			});
-			
-		recursiveDate.setDate(dateOfMonth + 1);
-	}
-	
-	var dateToString = function(date)
-	{
-		var day = date.getDate().toString();
-		var month = (date.getMonth() + 1).toString();
-		var year = date.getFullYear().toString();
-		
-		if (day.length == 1)
-		{
-			day = '0' + day;
-		}
-		
-		if (month.length == 1)
-		{
-			month = '0' + month;
-		}
-		
-		return year + '-' + month + '-' + day;
-	};
-	
-	var buildDateCell = function(day)
-	{
-		var dayDate = new Date(day.dateValue);
-		var cell = $('<td />')
-			.text(day.name)
-			.on 
-				(
-					'click',
-					function()
-					{
-						dateSelect
-							.selectioner
-							.target
-							.val(dateToString(dayDate))
-							.trigger('change.selectioner');
-							
-						dateSelect.popup.hide();
-							
-						dateSelect.renderDays(dateSelect.getDate());
-					}
-				);
-		
-		if (day.isWeekend)
-		{
-			cell.addClass('weekend');
-		}
-		
-		if (day.isNextMonth)
-		{
-			cell.addClass('next-month');
-		}
-		
-		if (day.isPrevMonth)
-		{
-			cell.addClass('prev-month');
-		}
-		
-		if (day.isToday)
-		{
-			cell.addClass('today');
-		}
-		
-		if (day.isSelected)
-		{
-			cell.addClass('selected');
-		}
-		
-		return cell;
-	};
-	
-	// Render out each individual day. We make the assumption here that 
-	// there will be exactly seven items per row, and that the total number 
-	// of days we found is evenly divisible by seven as well.
-	for (var i = 0, length = days.length / 7; i < length; i++)
-	{
-		var weekRow = $('<tr />');
-		for (var j = 0; j < 7; j++)
-		{
-			weekRow.append(buildDateCell(days[i * 7 + j]));
-		}
-		tbody.append(weekRow);
-	}
-	
-	return $('<table />')
-		.append(thead)
-		.append(tbody);
+	var date = this.getCurrentDate();
+	date.setDate(date.getDate() + day);
+	this.setCurrentDate(date);	
 };
 
-DateSelect.prototype.renderHeader = function(date, nextMonthDate, prevMonthDate)
+DateSelect.prototype.addMonths = function(months)
 {
-	var dateSelect = this;
-
-	var currentMonth = $('<span />')
-		.text(this.getHeaderText(date));
-	
-	var nextMonth = $('<a />')
-		.attr('href', 'javascript:;')
-		.addClass('next')
-		.text('›')
-		.on
-			(
-				'click', 
-				function()
-				{
-					dateSelect.renderDays(nextMonthDate);
-				}
-			);
-	
-	var previousMonth = $('<a />')
-		.attr('href', 'javascript:;')
-		.addClass('prev')
-		.text('‹')
-		.on
-			(
-				'click', 
-				function()
-				{
-					dateSelect.renderDays(prevMonthDate);
-				}
-			);
-	
-	return $('<div />')
-		.append(previousMonth)
-		.append(currentMonth)
-		.append(nextMonth);
+	var date = this.getCurrentDate();
+	date.setMonth(date.getMonth() + months);
+	this.setCurrentDate(date);	
 };
 
-// Builds the header text from the date provided.
-DateSelect.prototype.getHeaderText = function(date)
+DateSelect.prototype.addYears = function(years)
 {
-	return DateSelect.Settings.shortMonthNames[date.getMonth()] + ' ' + date.getFullYear();
+	var date = this.getCurrentDate();
+	date.setYear(date.getFullYear() + years);
+	this.setCurrentDate(date);	
 };
 
 // Get the currently selected date, or today's date if no date is selected.
-DateSelect.prototype.getDate = function()
+DateSelect.prototype.getCurrentDate = function()
 {
 	var dateValue = this.selectioner.target.val();
 
@@ -1642,23 +1843,17 @@ DateSelect.prototype.getDate = function()
 		return new Date(datePart[0], datePart[1] - 1, datePart[2]); // months are zero-based
 	}
 	
-	return this.getToday();
+	return new Date();
 };
 
-// Get today's date.
-DateSelect.prototype.getToday = function()
+DateSelect.prototype.setCurrentDate = function(date)
 {
-	var today = new Date();
-	
-	today.setHours(0);
-	today.setMinutes(0);
-	today.setSeconds(0);
-	today.setMilliseconds(0);
-	
-	return today;
+	this.selectioner
+		.target
+		.val(DateSelect.Utility.dateToString(date))
+		.trigger('change.selectioner');
+	this.update();
 };
-
-
 $.fn.singleSelect = function ()
 {
 	this
