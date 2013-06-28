@@ -42,11 +42,8 @@
   padding: 4px 0px;
   max-height: 120px;
 }
-.select-popup > ul > li {
-  padding: 0px 4px;
-}
-.select-popup > ul li.current a,
-.select-popup > ul li.current label {
+.select-popup > ul li.highlight a,
+.select-popup > ul li.highlight label {
   background-color: #F5F5F5;
 }
 .select-popup > ul input[disabled] + span,
@@ -67,6 +64,11 @@
   list-style: none;
   overflow: auto;
 }
+.select-popup ul li a,
+.select-popup ul li span,
+.select-popup ul li label {
+  padding: 0px 4px;
+}
 .select-popup ul li label {
   display: block;
   font-weight: normal;
@@ -79,7 +81,7 @@
 }
 .select-popup ul li input[type="checkbox"] {
   vertical-align: middle;
-  margin: 0px 6px 0px 3px;
+  margin: 0px;
   outline: none;
 }
 .select-popup .select-group-title {
@@ -132,7 +134,7 @@ textarea[readonly] + .select-display > .select-text {
   /* Stop IE10 from picking sub-pixel values by setting a round number ourselves. */
 
   display: inline-block;
-  min-width: 126px;
+  min-width: 133px;
   text-align: left;
   padding: 1px 24px 1px 2px;
   margin: 0px;
@@ -181,6 +183,7 @@ textarea[readonly] + .select-display > .select-text {
   background-position: 0px -16px;
 }
 .select-popup ul li.none a,
+.select-popup ul li.none span,
 .select-display .none {
   color: #999;
 }
@@ -330,6 +333,29 @@ textarea[readonly] + .select-display > .select-text {
 .select-date .years a.selected.current span {
   background-color: #F5F9FF;
 }
+.select-date .months a.previous:hover span,
+.select-date .days a.previous:hover span,
+.select-date .years a.previous:hover span,
+.select-date .months a.next:hover span,
+.select-date .days a.next:hover span,
+.select-date .years a.next:hover span,
+.select-date .months a.selected:hover span,
+.select-date .days a.selected:hover span,
+.select-date .years a.selected:hover span {
+  color: #3377DD;
+  background-color: #EEE;
+}
+.select-date .months a.previous:active span,
+.select-date .days a.previous:active span,
+.select-date .years a.previous:active span,
+.select-date .months a.next:active span,
+.select-date .days a.next:active span,
+.select-date .years a.next:active span,
+.select-date .months a.selected:active span,
+.select-date .days a.selected:active span,
+.select-date .years a.selected:active span {
+  background-color: #DDD;
+}
 .select-date .months a.previous,
 .select-date .days a.previous,
 .select-date .years a.previous,
@@ -347,29 +373,19 @@ textarea[readonly] + .select-display > .select-text {
   display: block;
   padding: 2px 0px;
 }
-.select-date .months a.previous:hover span,
-.select-date .days a.previous:hover span,
-.select-date .years a.previous:hover span,
-.select-date .months a.next:hover span,
-.select-date .days a.next:hover span,
-.select-date .years a.next:hover span {
-  color: #3377DD;
-  background-color: #EEE;
-}
 .select-date .months a.selected span,
 .select-date .days a.selected span,
 .select-date .years a.selected span {
   border-top: solid 1px #5599FF;
   border-bottom: solid 1px #5599FF;
 }
-.select-date .months a.selected:hover span,
-.select-date .days a.selected:hover span,
-.select-date .years a.selected:hover span {
-  color: #3377DD;
-  background-color: #F9F9F9;
-}
 .select-date .months {
   width: 34%;
+}
+.select-date .months .up,
+.select-date .months .down {
+  border-left: 1px solid #DDD;
+  border-right: 1px solid #DDD;
 }
 .select-date .days a.previous span,
 .select-date .days a.next span,

@@ -192,6 +192,7 @@ Selectioner.Settings =
 	cssPrefix: 'select-',
 	noSelectionText: 'Select an option',
 	emptyOptionText: 'None',
+	noOptionText: 'No Options Available',
 	maxAutoCompleteItems: 5
 };
 var Popup = function() {};
@@ -202,6 +203,8 @@ Popup.prototype.initialize = function(selectioner)
 
 	this.selectioner = selectioner;
 	this.dialogs = [];
+	
+	this._dialogFocusIndex = null;
 
 	this.element = $('<div />')
 		.addClass(Selectioner.Settings.cssPrefix + 'popup')
@@ -256,10 +259,6 @@ Popup.prototype.initialize = function(selectioner)
 // Add a dialog to this popup.
 Popup.prototype.addDialog = function(dialog)
 {
-	// Initialize the dialog in order to associated
-	// it with the underlying target element.
-	var dialogElement;
-	
 	if (!(dialog instanceof Selectioner.Core.Dialog))
 	{
 		// This is a static dialog in the form of a CSS selector or vanilla HTML.
@@ -274,15 +273,30 @@ Popup.prototype.addDialog = function(dialog)
 		
 		dialog = staticDialog;
 	}
-		
+	
+	// Initialize the dialog in order to associated
+	// it with the underlying target element.
 	dialog.initialize(this.selectioner);
 	dialog.setPopup(this);
 	dialog.render();
-	dialogElement = dialog.element;
-		
-	this.element.append(dialogElement);
+	
+	this.element.append(dialog.element);
 	
 	this.dialogs.push(dialog);
+	
+	var index = this.dialogs.length - 1;
+	
+	var popup = this;
+	
+	dialog.element
+		.on
+			(
+				'mousemove', 
+				function()
+				{
+					popup.dialogFocusIndex(index);
+				}
+			);
 };
 
 // Update all the dialogs that appear on this popup.
@@ -378,15 +392,6 @@ Popup.prototype.show = function()
 				// the height of the pop-up because of this, reposition it again.
 				this.reposition();
 			}
-			
-			if (this.element.hasClass('above'))
-			{
-				this.previous();
-			}
-			else
-			{
-				this.next();
-			}
 						
 			this.selectioner.trigger('show.selectioner');
 		}
@@ -403,7 +408,58 @@ Popup.prototype.hide = function()
 		this._isVisible = false;
 		this.element.css({ visibility: 'hidden', zIndex: '-1' });
 		this.selectioner.trigger('hide.selectioner');
+		this._dialogFocusIndex = null;
 	}
+};
+
+// Works out which dialog to focus on. This is mostly used
+// in order to work out which dialog to feed keystrokes to.
+Popup.prototype.changeDialogFocus = function(moveUp)
+{
+	var index = null;
+
+	if (moveUp)
+	{
+		if (this._dialogFocusIndex > 0)
+		{
+			index = this.dialogFocusIndex(this._dialogFocusIndex - 1);
+		}
+		else
+		{
+			index = this.dialogFocusIndex(this.dialogs.length - 1);
+		}
+	}
+	else
+	{
+		if (this._dialogFocusIndex < this.dialogs.length - 1 &&
+			this._dialogFocusIndex !== null)
+		{
+			index = this.dialogFocusIndex(this._dialogFocusIndex + 1);
+		}
+		else
+		{
+			index = this.dialogFocusIndex(0);
+		}
+	}
+	
+	return index;
+};
+
+Popup.prototype.dialogFocusIndex = function(index)
+{
+	if (index !== undefined && 
+		index !== null && 
+		this._dialogFocusIndex !== index)
+	{
+		if (this._dialogFocusIndex !== null)
+		{
+			this.dialogs[this._dialogFocusIndex].lostFocus();
+		}
+		
+		this._dialogFocusIndex = index;
+	}
+	
+	return this._dialogFocusIndex;
 };
 
 // Simply indicates whether the popup is shown to the user currently.
@@ -412,107 +468,82 @@ Popup.prototype.isShown = function()
 	return this._isVisible;
 };
 
-Popup.prototype.next = function()
+// Handles key down events. This is called via the Display, 
+// and probably should not be called manually else where.
+// It works out which dialog to feed the key to, and 
+// passes it along.
+Popup.prototype.keyDown = function (key)
 {
-	var canMove = false;
+	var result = { preventDefault: false };
+
+	var moveUp = 
+		key == 38 ||	// Up arrow
+		key == 37 ||	// Left Arrow
+		key == 8;		// Backspace
 	
-	if (!this.currentDialogIndex)
+	var index = this.dialogFocusIndex();
+	
+	if (index === null)
 	{
-		this.currentDialogIndex = 0;
+		index = this.changeDialogFocus(moveUp);
 	}
-		
-	while (!canMove)
+	
+	var coveredDialogs = {};	
+	while (!coveredDialogs[index])
 	{
-		canMove = this.dialogs[this.currentDialogIndex].next();
+		// Keep track of what dialogs we've attempted to hand 
+		// this keystroke down to, so that we do not end up in 
+		// an infinite loop.
+		coveredDialogs[index] = true;
 		
-		if (!canMove)
+		result = this.dialogs[index].keyDown(key);
+		
+		// If the pop-up is still visible, but the dialog indicates that it 
+		// wants to hand off keyboard focus, then move to the next dialog.
+		if (!result.handled)
 		{
-			if (this.currentDialogIndex < this.dialogs.length - 1)
-			{
-				this.currentDialogIndex++;
-			}
-			else
-			{				
-				return false;
-			}
+			index = this.changeDialogFocus(moveUp);
 		}
 	}
 	
-	return true;
+	return result;
 };
 
-Popup.prototype.previous = function()
-{
-	var canMove = false;
+// Handles key press events. This is called via the Display, 
+// and probably should not be called manually else where.
+// It works out which dialog to feed the key to, and 
+// passes it along.
+Popup.prototype.keyPress = function (key)
+{	
+	var result = { preventDefault: false };
+	var moveUp = this.element.hasClass('above');
+
+	var index = this.dialogFocusIndex();
 	
-	if (!this.currentDialogIndex)
+	if (index === null)
 	{
-		this.currentDialogIndex = this.dialogs.length - 1;
+		index = this.changeDialogFocus(moveUp);
 	}
-		
-	while (!canMove)
+	
+	var coveredDialogs = {};	
+	while (!coveredDialogs[index])
 	{
-		canMove = this.dialogs[this.currentDialogIndex].previous();
+		// Keep track of what dialogs we've attempted to hand 
+		// this keystroke down to, so that we do not end up in 
+		// an infinite loop.
+		coveredDialogs[index] = true;
 		
-		if (!canMove)
+		result = this.dialogs[index].keyPress(key);
+		
+		// If the pop-up is still visible, but the dialog indicates that it 
+		// wants to hand off keyboard focus, then move to the next dialog.
+		if (!result.handled)
 		{
-			if (this.currentDialogIndex > 0)
-			{
-				this.currentDialogIndex--;
-			}
-			else
-			{				
-				return false;
-			}
+			index = this.changeDialogFocus(moveUp);
 		}
 	}
 	
-	return true;
-};
-
-Popup.prototype.select = function()
-{
-	if (!this.currentDialogIndex)
-	{
-		this.currentDialogIndex = this.dialogs.length - 1;
-	}
-	
-	this.dialogs[this.currentDialogIndex].select();
-};
-
-Popup.prototype.onKeyDown = function(key, event)
-{
-	// Keyboard integration
-	if (this.isShown() && event.target === this.selectioner.display.element[0])
-	{
-		switch(key)
-		{
-			// Escape
-			case 27:
-				this.hide();
-				break;
-				
-			// Up arrow
-			case 38: 
-				event.preventDefault();
-				this.previous();
-				break;
-				
-			// Down arrow
-			case 40: 
-				event.preventDefault();
-				this.next();			
-				break;
-				
-			// Space
-			case 32:
-			// Enter / Return
-			case 13:
-				event.preventDefault();
-				this.select();
-				break;
-		}
-	}
+	return result; 
 };
 var Display = Selectioner.Core.Display = function() {};
 
@@ -617,17 +648,60 @@ Display.prototype.createDisplay = function()
 				);
 	}
 	
-	// Watch for keydown events.
+	// Handle the key down event for things like arrows, escape, backspace, etc.
 	this.element.on
 		(
 			'keydown.selectioner',
 			function(event)
 			{
-				display.onKeyDown
-					(
-						event.which || event.keyCode,
-						event
-					);
+				// Only perform keyboard-related actions if they are directly 
+				// related to the display, and not a child element thereof.
+				var key = event.which;
+								
+				if (event.target == display.element[0])
+				{
+					if (display.popup.isShown())
+					{
+						if (display.popup.keyDown(key).preventDefault)
+						{
+							event.preventDefault();
+						}
+					}
+					else
+					{
+						switch (key)
+						{
+							case 38: // Up arrow
+							case 40: // Down arrow
+							case 13: // Return / Enter
+								event.preventDefault();
+								display.popup.show();
+								break;
+						}
+					}
+				}
+				else if (key === 27) 
+				{
+					// Escape key was pressed.
+					display.element.focus();
+				}
+			}
+		);
+		
+	// Handle key press for things like filtering lists.
+	this.element.on
+		(
+			'keypress.selectioner',
+			function(event)
+			{
+				var key = event.which;
+				
+				if (event.target == display.element[0] && 
+					display.popup.isShown() && 
+					display.popup.keyPress(key).preventDefault)
+				{
+					event.preventDefault();
+				}
 			}
 		);
 };
@@ -649,9 +723,19 @@ Display.prototype.createPopup = function()
 		.on
 			(
 				'focusin.selectioner',
-				function()
+				function(event)
 				{
-					popup.show();
+					var target = $(event.target);
+				
+					if (event.target === dialog.element ||
+						target.prop('tabindex') > -1)
+					{
+						popup.show();
+					}
+					else
+					{
+						dialog.element.focus();
+					}					
 				}
 			)
 		.children()
@@ -760,35 +844,6 @@ Display.prototype.getNoSelectionText = function()
 	
 	return text;	
 };
-
-Display.prototype.onKeyDown = function(key, event)
-{
-	// Only perform keyboard-related actions if they are directly 
-	// related to the display, and not a child element thereof.
-	if (event.target == this.element[0])
-	{
-		if (this.popup.isShown())
-		{
-			this.popup.onKeyDown(key, event);
-		}
-		else
-		{
-			switch(key)
-			{
-				case 38: // Up arrow
-				case 40: // Down arrow
-				case 13: // Return / Enter
-					this.popup.show();
-					break;
-			}
-		}
-	}
-	else if (key === 27) 
-	{
-		// Escape key was pressed.
-		this.element.focus();
-	}
-};
 var Dialog = Selectioner.Core.Dialog = function() {};
 
 Dialog.prototype.initialize = function(selectioner)
@@ -827,24 +882,47 @@ Dialog.prototype.validateTarget = function()
 	// This may be ignored if no validation is required.
 };
 
-// In the case where a dialog displays a collection of child items,
-// override this method in order to move to the next item. Return
-// true if moving to the item was successful, and false if not.
-Dialog.prototype.next = function()
+// Override this method to allow for keyboard integration.
+// The method itself can be called manually, although this 
+// is generally not recommended, as this is usually 
+// handled by the popup. 
+Dialog.prototype.keyDown = function(key)
 {
-	return false;
+	var result = 
+		{
+			preventDefault: false,
+			handled: false
+		};
+		
+	// Escape || Backspace
+	if (key == 27 || key == 8)
+	{
+		this.popup.hide();
+		result.preventDefault = true;
+		result.handled = true;
+	}
+	
+	return result;
 };
 
-// In the case where a dialog displays a collection of child items,
-// override this method in order to move to the previous item. Return
-// true if moving to the item was successful, and false if not.
-Dialog.prototype.previous = function()
+// Override this method to allow for keyboard integration.
+// The method itself can be called manually, although this 
+// is generally not recommended, as this is usually 
+// handled by the popup. 
+Dialog.prototype.keyPress = function(key)
 {
-	return false;
+	var result = 
+		{
+			preventDefault: false,
+			handled: false
+		};
+			
+	return result;
 };
 
-// Override this to select the currently highlighted option.
-Dialog.prototype.select = function()
+// This will fire every time the dialog loses mouse or keyboard 
+// focus within the keyboard focus within the popup.
+Dialog.prototype.lostFocus = function()
 {
 };
 var ListBox = Selectioner.Display.ListBox = function() {};
@@ -1158,15 +1236,17 @@ SingleSelect.prototype.render = function()
 	var element = this.element
 		.on
 			(
-				'mouseenter',
+				'mousemove',
 				'li',
-				function(event)
-				{
-					var target = dialog.getSelectableOptions().filter(this);
-					if (target.length > 0 && !target.hasClass('current'))
+				function()
+				{	
+					var target = $(this);
+					
+					if (!target.hasClass('highlight') && 
+						dialog.getSelectableOptions().filter(this).length > 0)
 					{
-						element.find('li').removeClass('current');
-						target.addClass('current');
+						element.find('li').removeClass('highlight');
+						target.addClass('highlight');
 					}
 				}
 			);
@@ -1177,18 +1257,33 @@ SingleSelect.prototype.update = function()
 	this.element.empty();
 
 	var children = this.selectioner.target.children();
-	
-	for (var i = 0, length = children.length; i < length; i++)
+	if (children.length > 0)
 	{
-		var child = $(children[i]);
-		if (children[i].tagName == 'OPTION')
+		for (var i = 0, length = children.length; i < length; i++)
 		{
-			this.element.append(this.renderOption(child));
+			var child = $(children[i]);
+			if (children[i].tagName == 'OPTION')
+			{
+				this.element.append(this.renderOption(child));
+			}
+			else if (children[i].tagName == 'OPTGROUP')
+			{
+				this.element.append(this.renderGroup(child));
+			}
 		}
-		else if (children[i].tagName == 'OPTGROUP')
-		{
-			this.element.append(this.renderGroup(child));
-		}
+	}
+	else
+	{
+		this.element
+			.append
+				(
+					$('<li />')
+						.addClass('none')
+						.append
+							(
+								$('<span />').text(Selectioner.Settings.noOptionText)
+							)
+				);
 	}
 };
 
@@ -1262,6 +1357,7 @@ SingleSelect.prototype.renderGroup = function(group)
 	return groupElement;
 };
 
+// Get all options that can potentially be selected.
 SingleSelect.prototype.getSelectableOptions = function()
 {
 	return this.element
@@ -1277,13 +1373,14 @@ SingleSelect.prototype.getSelectableOptions = function()
 			);
 };
 
-SingleSelect.prototype.next = function()
+// Hightlight the next or previous item.
+SingleSelect.prototype.highlightAdjacentOption = function(isNext)
 {
 	var items = this.getSelectableOptions();
 	
-	if (items.filter('.current').length === 0)
+	if (items.filter('.highlight').length === 0)
 	{
-		items.first().addClass('current');
+		(isNext ? items.first() : items.last()).addClass('highlight');
 		return true;
 	}
 	else
@@ -1292,61 +1389,32 @@ SingleSelect.prototype.next = function()
 		{
 			var item = $(items[i]);
 			
-			if (item.hasClass('current'))
-			{
-				if (i < length - 1)
-				{
-					item.removeClass('current');
-					var currentItem = $(items[i + 1]).addClass('current');
-					
-					var maxScrollTop = currentItem.position().top + currentItem.height();
-					var height = this.popup.element.height();
-											
-					if (maxScrollTop > height)
-					{
-						this.popup.element.scrollTop(this.popup.element.scrollTop() + maxScrollTop - height);
-					}
-					
-					return true;
-				}
-				
-				return false;
-			}
-		}
-	}
-};
-
-SingleSelect.prototype.previous = function()
-{
-	var items = this.getSelectableOptions();
-	
-	if (items.filter('.current').length === 0)
-	{
-		items.last().addClass('current');
-		return true;
-	}
-	else
-	{
-		for (var i = 0, length = items.length; i < length; i++)
-		{
-			var item = $(items[i]);
+			var highlightItem;
 			
-			if (item.hasClass('current'))
+			if (item.hasClass('highlight'))
 			{
-				if (i > 0)
+				if (isNext)
 				{
-					item.removeClass('current');
-					var currentItem = $(items[i - 1]).addClass('current');
-					
-					var minScrollTop = currentItem.position().top;
-										
-					if (minScrollTop < 0)
+					if (i < length - 1)
 					{
-						this.popup.element.scrollTop(this.popup.element.scrollTop() + minScrollTop);
+						item.removeClass('highlight');
+						highlightItem = $(items[i + 1]).addClass('highlight');
+						this.scrollToHighlightedOption();					
+						return true;
 					}
-					
-					return true;
 				}
+				else
+				{
+					if (i > 0)
+					{
+						item.removeClass('highlight');
+						highlightItem = $(items[i - 1]).addClass('highlight');
+						this.scrollToHighlightedOption();
+						return true;
+					}
+				}
+				
+				items.removeClass('highlight');
 				
 				return false;
 			}
@@ -1354,12 +1422,153 @@ SingleSelect.prototype.previous = function()
 	}
 };
 
-SingleSelect.prototype.select = function()
+// Scroll to the highlighted option.
+Dialog.prototype.scrollToHighlightedOption = function()
 {
-	var selectedItem = this.getSelectableOptions()
-		.filter('.current')
+	var option = this.getSelectableOptions().filter('.highlight');
+	
+	if (option.length > 0)
+	{
+		var optionTop = option.position().top;
+			
+		if (optionTop < 0)
+		{
+			this.popup.element.scrollTop(this.popup.element.scrollTop() + optionTop);
+		}
+		else
+		{
+			var popupHeight = this.popup.element.height();
+			optionTop += option.height();
+			
+			if (optionTop > popupHeight)
+			{
+				this.popup.element.scrollTop(this.popup.element.scrollTop() + optionTop - popupHeight);
+			}
+		}
+	}
+};
+
+// Select the highlightly highlighted option.
+Dialog.prototype.selectHighlightedOption = function()
+{
+	this.getSelectableOptions()
+		.filter('.highlight')
 		.find('a,label')
 		.trigger('click');
+};
+
+// Handle key-down events. This method is called by the pop-up, and
+// thus usually should not be called manually elsewhere.
+SingleSelect.prototype.keyDown = function (key)
+{
+	var result = Dialog.prototype.keyDown.call(this, key);
+
+	if (!result.handled)
+	{
+		switch(key)
+		{				
+			// Up arrow
+			case 38: 
+				if (this.highlightAdjacentOption(false))
+				{
+					result.handled = true;
+					result.preventDefault = true;
+				}
+				break;
+				
+			// Down arrow
+			case 40: 
+				if (this.highlightAdjacentOption(true))
+				{
+					result.handled = true;
+					result.preventDefault = true;
+				}
+				break;
+				
+			// Space
+			case 32:
+				if (!this.keyPressFilter)
+				{
+					this.selectHighlightedOption();
+					result.handled = true;
+					result.preventDefault = true;
+				}
+				break;
+				 
+			// Enter / Return
+			case 13:
+				this.selectHighlightedOption();
+				result.handled = true;
+				result.preventDefault = true;
+				break;
+		}
+	}
+	
+	this.scrollToHighlightedOption();
+	
+	return result;
+};
+
+// Handle key-press events. This method is called by the pop-up, and
+// thus usually should not be called manually elsewhere.
+Dialog.prototype.keyPress = function(key)
+{
+	var result = 
+		{
+			preventDefault: false,
+			handled: false
+		};
+
+	// Do not filter on enter / return or tab.
+	if (key != 13 && key != 9)
+	{
+		var dialog = this;
+		
+		clearTimeout(this.keyPressFilterTimeout);
+	
+		this.keyPressFilter = (this.keyPressFilter || '') + String.fromCharCode(key).toUpperCase();
+						
+		this.keyPressFilterTimeout = setTimeout
+			(
+				function()
+				{  
+					dialog.keyPressFilter = '';
+				},
+				400
+			);
+			
+		// Find the first option that satisfies the filter, 
+		// and highlight and select it.
+		var options = this.getSelectableOptions();
+		var isSet = false;
+		for (var i = 0, length = options.length; i < length; i++)
+		{
+			var option = $(options[i]);
+			if (option.text().toUpperCase().indexOf(this.keyPressFilter) > -1)
+			{
+				options.removeClass('highlight');
+				option.addClass('highlight');
+				isSet = true;
+				break;
+			}
+		}
+		
+		if (!isSet)
+		{
+			clearTimeout(this.keyPressFilterTimeout);
+			this.keyPressFilter = '';
+		}
+		
+		result.preventDefault = true;
+		result.handled = true;
+	}
+	
+	return result;
+};
+
+SingleSelect.prototype.lostFocus = function()
+{
+	this.element.find('li').removeClass('highlight');
 };
 var MultiSelect = Selectioner.Dialog.MultiSelect = function() {};
 
@@ -1592,6 +1801,16 @@ AutoComplete.prototype.update = function()
 				break;
 			}
 		}
+	}
+	
+	if (filteredOptions.length === 0)
+	{
+		filteredOptions = $('<li />')
+			.addClass('none')
+			.append
+				(
+					$('<span />').text(Selectioner.Settings.noOptionText)
+				);
 	}
 	
 	this.element
@@ -1920,6 +2139,63 @@ DateSelect.prototype.setCurrentDate = function(date)
 		.val(DateSelect.Utility.dateToString(date))
 		.trigger('change.selectioner');
 	this.update();
+};
+
+// Handle key-down events. This method is called by the pop-up, and
+// thus usually should not be called manually elsewhere.
+DateSelect.prototype.keyDown = function (key)
+{
+	var result = 
+		{
+			preventDefault: false,
+			handled: false
+		};
+		
+	if (!result.handled)
+	{
+		switch(key)
+		{				
+			// Up arrow
+			case 38: 
+				this.addDays(-1);
+				result.handled = true;
+				result.preventDefault = true;
+				break;
+				
+			// Down arrow
+			case 40: 
+				this.addDays(1);
+				result.handled = true;
+				result.preventDefault = true;
+				break;
+			
+			// Backspace			
+			case 8: 
+				this.setCurrentDate(null);
+				this.popup.hide();
+				result.handled = true;
+				result.preventDefault = true;
+				break;
+			
+			// Escape
+			case 27:
+				this.popup.hide();
+				result.preventDefault = true;
+				result.handled = true;
+				break;
+				
+			// Space
+			case 32:
+			// Enter / Return
+			case 13:
+				this.popup.hide();
+				result.handled = true;
+				result.preventDefault = true;
+				break;
+		}
+	}
+		
+	return result;
 };
 $.fn.singleSelect = function ()
 {
