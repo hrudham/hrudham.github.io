@@ -131,6 +131,8 @@ Eventable.prototype.trigger = function (name, data)
 };
 var Selectioner = window.Selectioner = function(target, display, dialogs)
 {
+	this.id = Selectioner._idSeed++;
+	
 	// Convert dialogs to an array if it isn't one already.
 	if (!(dialogs instanceof Array))
 	{
@@ -176,6 +178,8 @@ Eventable.prototype.trigger = function (name, data)
 };
 
 Selectioner.prototype = new Eventable();
+
+Selectioner._idSeed = 0;
 
 Selectioner.Core = {};
 
@@ -227,6 +231,19 @@ Popup.prototype.initialize = function(selectioner)
 					// the popup. Thus, we stop propagation of these events here.
 					event.stopPropagation();
 				}
+			)
+		// Allow the popup to have a tabindex such that we can detect focusin events.
+		// This allows us to redirect focus to the display if anything in the popup
+		// gains focus (such as a checkbox), which stops the keyboard integration
+		// from breaking.
+		.prop('tabindex', selectioner.target.prop('tabindex') + 1)
+		.on
+			(
+				'focusin.selectioner',
+				function(event)
+				{
+					selectioner.display.element.focus();
+				}
 			);
 
 	this.update();
@@ -238,20 +255,20 @@ Popup.prototype.initialize = function(selectioner)
 	this.selectioner
 		.target
 		.on
-		(
-			'change',
-			function(event, data)
-			{
-				if (!data || data.source !== 'selectioner')
+			(
+				'change',
+				function(event, data)
 				{
-					if (popup.isShown())
+					if (!data || data.source !== 'selectioner')
 					{
-						popup.update();
-						popup.reposition();
+						if (popup.isShown())
+						{
+							popup.update();
+							popup.reposition();
+						}
 					}
 				}
-			}
-		);
+			);
 			
 	$('body').append(this.element);
 };
@@ -367,46 +384,65 @@ Popup.prototype.show = function()
 		$(window)
 			.one
 			(
-				'resize.selectioner',
+				'resize.selectioner_' + this.selectioner.id,
 				function()
 				{
 					popup.hide();
 				}
 			);
-
-		if (!this.isShown())
+	
+		this._isVisible = true;
+		this.update();
+		
+		var popUpHeight = this.element.height();
+		
+		this.reposition();
+		
+		this.element.css({ visibility: 'visible', zIndex: '' });
+		
+		if (popUpHeight != this.element.height())
 		{
-			this._isVisible = true;
-			this.update();
-			
-			var popUpHeight = this.element.height();
-			
+			// Height can often only be calculated by jQuery after the 
+			// element is visible on the page. If our CSS happens to change
+			// the height of the pop-up because of this, reposition it again.
 			this.reposition();
-			
-			this.element.css({ visibility: 'visible', zIndex: '' });
-			
-			if (popUpHeight != this.element.height())
-			{
-				// Height can often only be calculated by jQuery after the 
-				// element is visible on the page. If our CSS happens to change
-				// the height of the pop-up because of this, reposition it again.
-				this.reposition();
-			}
-						
-			this.selectioner.trigger('show.selectioner');
 		}
+		
+		this.selectioner
+			.target
+			.parents()
+			.add(window)
+			.on
+				(
+					'scroll.selectioner_' + this.selectioner.id, 
+					function() 
+					{
+						if (popup.isShown())
+						{
+							popup.hide();
+						}
+					}
+				);
+					
+		this.selectioner.trigger('show.selectioner');
 	}
 };
 
 // Simply hides the pop-up.
 Popup.prototype.hide = function()
 {
-	$(window).off('resize.selectioner');
+	$(window).off('resize.selectioner_{id} scroll.selectioner_{id}'.replace(/\{id\}/g, this.selectioner.id));
 
 	if (this.isShown())
 	{
 		this._isVisible = false;
-		this.element.css({ visibility: 'hidden', zIndex: '-1' });
+		this.element.css
+			({ 
+				visibility: 'hidden', 
+				zIndex: '-1',
+				top: 0,
+				left: 0
+			});
 		this.selectioner.trigger('hide.selectioner');
 		this._dialogFocusIndex = null;
 	}
@@ -894,8 +930,8 @@ Dialog.prototype.keyDown = function(key)
 			handled: false
 		};
 		
-	// Escape || Backspace
-	if (key == 27 || key == 8)
+	// Escape
+	if (key == 27)
 	{
 		this.popup.hide();
 		result.preventDefault = true;
@@ -1036,10 +1072,18 @@ ComboBox.prototype.render = function()
 	this.element = $('<span />');
 		
 	var comboBox = this;
-		
+	
 	this.textElement
 		.addClass(Selectioner.Settings.cssPrefix + 'text')
-		.on('change.selectioner', function() { comboBox.textChanged(); });
+		.on(
+			'change.selectioner', 
+			function(e, data) 
+			{			
+				if (!data || data.source != 'selectioner')
+				{
+					comboBox.textChanged();
+				}
+			});
 	
 	var button = $('<span />')
 		.addClass(Selectioner.Settings.cssPrefix + 'button');
@@ -1086,8 +1130,11 @@ ComboBox.prototype.textChanged = function()
 		option = this.getEmptyOptions();
 	}
 	
-	option[0].selected = true;
-	this.selectioner.target.trigger('change');
+	if (!option[0].selected)
+	{
+		option[0].selected = true;
+		this.selectioner.target.trigger('change', { source: 'selectioner' });
+	}
 };
 
 ComboBox.prototype.update = function()
@@ -1103,7 +1150,7 @@ ComboBox.prototype.update = function()
 	}
 	else if (value !== '')
 	{
-		this.textElement.val(value);
+		this.textElement.val(value).trigger('change', { source: 'selectioner' });
 	}
 };
 
@@ -1199,21 +1246,17 @@ DateBox.prototype.update = function()
 // Obtains the the string representation of the date provided.
 DateBox.prototype.getDateText = function(date)
 {
-	var day = date.getDate().toString();
-	var month = (date.getMonth() + 1).toString();
-	var year = date.getFullYear().toString();
-	
-	if (day.length == 1)
+	if (window.Globalize)
 	{
-		day = '0' + day;
+		// Globalize is defined, so use it to output a 
+		// short-date in the culturally correct format.
+		// https://github.com/jquery/globalize
+		return Globalize.format(date, 'd');
 	}
-	
-	if (month.length == 1)
+	else
 	{
-		month = '0' + month;
+		return date.toLocaleDateString();
 	}
-	
-	return year + '-' + month + '-' + day;
 };
 var SingleSelect = Selectioner.Dialog.SingleSelect = function() {};
 
@@ -1423,7 +1466,7 @@ SingleSelect.prototype.highlightAdjacentOption = function(isNext)
 };
 
 // Scroll to the highlighted option.
-Dialog.prototype.scrollToHighlightedOption = function()
+SingleSelect.prototype.scrollToHighlightedOption = function()
 {
 	var option = this.getSelectableOptions().filter('.highlight');
 	
@@ -1449,10 +1492,19 @@ Dialog.prototype.scrollToHighlightedOption = function()
 };
 
 // Select the highlightly highlighted option.
-Dialog.prototype.selectHighlightedOption = function()
+SingleSelect.prototype.selectHighlightedOption = function()
 {
 	this.getSelectableOptions()
 		.filter('.highlight')
+		.find('a,label')
+		.trigger('click');
+};
+
+// Clear the selected item(s) if possible.
+SingleSelect.prototype.clearSelection = function()
+{
+	this.getSelectableOptions()
+		.filter('.none:first')
 		.find('a,label')
 		.trigger('click');
 };
@@ -1485,6 +1537,14 @@ SingleSelect.prototype.keyDown = function (key)
 				}
 				break;
 				
+			// Backspace
+			case 8: 
+				this.clearSelection();
+				this.popup.hide();
+				result.handled = true;
+				result.preventDefault = true;
+				break;
+				
 			// Space
 			case 32:
 				if (!this.keyPressFilter)
@@ -1511,7 +1571,7 @@ SingleSelect.prototype.keyDown = function (key)
 
 // Handle key-press events. This method is called by the pop-up, and
 // thus usually should not be called manually elsewhere.
-Dialog.prototype.keyPress = function(key)
+SingleSelect.prototype.keyPress = function(key)
 {
 	var result = 
 		{
@@ -1677,6 +1737,13 @@ MultiSelect.prototype.renderGroup = function(group)
 	
 	return groupElement;
 };
+
+MultiSelect.prototype.clearSelection = function()
+{
+	this.getSelectableOptions()
+		.find('input:checkbox:checked')
+		.trigger('click');
+};
 var ComboSelect = Selectioner.Dialog.ComboSelect = function() {};
 
 ComboSelect.prototype = new Selectioner.Dialog.SingleSelect();
@@ -1730,16 +1797,15 @@ AutoComplete.prototype.render = function()
 	}
 	
 	this.update();
-	this._textValue = this.textElement.val();
 	
 	var dialog = this;
 	
 	this.textElement.on
 		(
-			'keyup change', 
-			function(event)
+			'keyup click', 
+			function(e, data)
 			{
-				if (dialog._textValue !== dialog.textElement.val())
+				if (!data || data.source != 'selectioner')
 				{
 					dialog.update();
 					if (!dialog.popup.isShown())
@@ -1750,8 +1816,6 @@ AutoComplete.prototype.render = function()
 					{
 						dialog.popup.reposition();
 					}
-					
-					dialog._textValue = dialog.textElement.val();
 				}
 			}
 		);
@@ -1775,7 +1839,7 @@ AutoComplete.prototype.update = function()
 					{
 						option[0].selected = true;
 						dialog.popup.hide();
-						dialog.selectioner.target.trigger('change');
+						dialog.selectioner.target.trigger('change', { source: 'selectioner' });
 					}
 				);
 		
@@ -1817,7 +1881,10 @@ AutoComplete.prototype.update = function()
 		.empty()
 		.append(filteredOptions);
 };
-var DateSelect = Selectioner.Dialog.DateSelect = function() {};
+// Note that you may optionally include the excellent Globalize library in order 
+// to get culturally formatted dates. See https://github.com/jquery/globalize
+
+var DateSelect = Selectioner.Dialog.DateSelect = function() {};
 
 DateSelect.prototype = new Selectioner.Core.Dialog();
 
@@ -1853,6 +1920,17 @@ DateSelect.Utility =
 		
 		return year + '-' + month + '-' + day;
 	},
+	stringToTitleCase: function(input)
+	{
+		return input.replace
+			(
+				/\w\S*/g, 
+				function (txt)
+				{
+					return txt.charAt(0).toUpperCase() + txt.substr(1).toLowerCase();
+				}
+			);
+	},
 	buildScroller: function(collection, currentValue)
 	{	
 		var buildItem = function(i)
@@ -1870,6 +1948,7 @@ DateSelect.Utility =
 		};
 		
 		return $('<span />')
+			.addClass('scroller')
 			.append($('<a />').attr('href', 'javascript:;').addClass('up'))
 			.append(buildItem(0).addClass('previous'))
 			.append(buildItem(1).addClass('selected'))
@@ -1923,7 +2002,7 @@ DateSelect.prototype.render = function()
 			(
 				'mousewheel wheel',
 				'.days',
-				function(event, delta)
+				function(event)
 				{
 					dateSelect.addDays(handleWheelChange(event));
 				}
@@ -1932,7 +2011,7 @@ DateSelect.prototype.render = function()
 			(
 				'mousewheel wheel',
 				'.months',
-				function(event, delta)
+				function(event)
 				{
 					dateSelect.addMonths(handleWheelChange(event));
 				}
@@ -1941,7 +2020,7 @@ DateSelect.prototype.render = function()
 			(
 				'mousewheel wheel',
 				'.years',
-				function(event, delta)
+				function(event)
 				{
 					dateSelect.addYears(handleWheelChange(event));
 				}
@@ -2006,6 +2085,7 @@ DateSelect.prototype.render = function()
 				'.selected',
 				function()
 				{
+					dateSelect.setCurrentDate(dateSelect.getCurrentDate());
 					dateSelect.popup.hide();
 				}
 			)
@@ -2015,6 +2095,8 @@ DateSelect.prototype.render = function()
 				'.today',
 				function()
 				{
+					// Always set the date, in case it's been 
+					// cleared, and we want to set it to today.
 					dateSelect.setCurrentDate(new Date());
 					dateSelect.popup.hide();
 				}
@@ -2042,14 +2124,20 @@ DateSelect.prototype.update = function()
 	
 	// Months
 	var monthNames = DateSelect.Settings.monthNames;
+	
+	if (window.Globalize)
+	{
+		monthNames = Globalize.culture().calendars.standard.months.namesAbbr;
+	}
+	
 	var currentMonth = currentDate.getMonth();
 	var previousMonth = currentMonth === 0 ? 11 : currentMonth - 1;
 	var nextMonth = currentMonth === 11 ? 0 : currentMonth + 1;
 	var months = 
 		[
-			monthNames[previousMonth],
-			monthNames[currentMonth],
-			monthNames[nextMonth]
+			DateSelect.Utility.stringToTitleCase(monthNames[previousMonth]),
+			DateSelect.Utility.stringToTitleCase(monthNames[currentMonth]),
+			DateSelect.Utility.stringToTitleCase(monthNames[nextMonth])
 		];
 	
 	// Days
@@ -2078,11 +2166,53 @@ DateSelect.prototype.update = function()
 	// Build the control
 	this.element
 		.empty()
-		.append(todayButton)
-		.append(DateSelect.Utility.buildScroller(days, today.getDate()).addClass('days'))
-		.append(DateSelect.Utility.buildScroller(months, monthNames[today.getMonth()]).addClass('months'))
-		.append(DateSelect.Utility.buildScroller([currentYear - 1, currentYear, currentYear + 1], today.getFullYear()).addClass('years'))
-		.append(clearButton);
+		.append(todayButton);
+		
+	// Attempt to define the order of the scrollers
+	// based upon the user's culture settings.
+	var diviningDate = new Date(1999, 7, 4);
+	var dateString = diviningDate.toLocaleDateString();
+	if (window.Globalize)
+	{
+		dateString = Globalize.format(diviningDate, 'd');
+	}
+	
+	var monthIndex = dateString.indexOf('8');
+	if (monthIndex === -1)
+	{
+		monthIndex = dateString.search(/[^\d ]/i);
+	}
+	
+	var scrollers = 
+		[  
+			{
+				index: dateString.indexOf('99'),
+				element: DateSelect.Utility.buildScroller([currentYear - 1, currentYear, currentYear + 1], today.getFullYear()).addClass('years')
+			},
+			{
+				index: monthIndex, // Month is zero-based, hence we add one.
+				element: DateSelect.Utility.buildScroller(months, monthNames[today.getMonth()]).addClass('months')
+			},
+			{
+				index: dateString.indexOf('4'),
+				element: DateSelect.Utility.buildScroller(days, today.getDate()).addClass('days')
+			}
+		];
+		
+	scrollers.sort
+			(
+				function(a, b)
+				{
+					return a.index > b.index;
+				}
+			);
+	
+	for (var i = 0; i < 3; i++)
+	{
+		this.element.append(scrollers[i].element);
+	}
+		
+	this.element.append(clearButton);
 };
 
 DateSelect.prototype.addDays = function(day)
@@ -2145,11 +2275,7 @@ DateSelect.prototype.setCurrentDate = function(date)
 // thus usually should not be called manually elsewhere.
 DateSelect.prototype.keyDown = function (key)
 {
-	var result = 
-		{
-			preventDefault: false,
-			handled: false
-		};
+	var result = Dialog.prototype.keyDown.call(this, key);
 		
 	if (!result.handled)
 	{
@@ -2176,18 +2302,12 @@ DateSelect.prototype.keyDown = function (key)
 				result.handled = true;
 				result.preventDefault = true;
 				break;
-			
-			// Escape
-			case 27:
-				this.popup.hide();
-				result.preventDefault = true;
-				result.handled = true;
-				break;
 				
 			// Space
 			case 32:
 			// Enter / Return
 			case 13:
+				this.setCurrentDate(this.getCurrentDate());
 				this.popup.hide();
 				result.handled = true;
 				result.preventDefault = true;
