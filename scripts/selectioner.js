@@ -129,8 +129,15 @@ Eventable.prototype.trigger = function (name, data)
 
     return this;
 };
-var Selectioner = window.Selectioner = function(target, display, dialogs)
+var Selectioner = window.Selectioner = function(target, display, dialogs, settings)
 {
+	this.settings = Selectioner.DefaultSettings;
+	
+	for (var prop in settings)
+	{
+		this.settings[prop] = settings[prop];
+	}
+	
 	this.id = Selectioner._idSeed++;
 	
 	// Convert dialogs to an array if it isn't one already.
@@ -149,7 +156,7 @@ Eventable.prototype.trigger = function (name, data)
 		// This occurs if we attempt to provide more than one Selectioner on a single element.
 		throw new Error('The target element has already has a Selectioner associated with it.');
 	}
-	else if (target.next().hasClass(Selectioner.Settings.cssPrefix + 'display'))
+	else if (target.next().hasClass(this.settings.cssPrefix + 'display'))
 	{
 		// Remove any old Displays that may already have been rendered.
 		// This can occur if someone saves a webpage as-is to their PC, 
@@ -191,7 +198,7 @@ Selectioner.Extensions = {};
 
 Selectioner.Popup = {};
 
-Selectioner.Settings =
+Selectioner.DefaultSettings =
 {
 	cssPrefix: 'select-',
 	noSelectionText: 'Select an option',
@@ -211,7 +218,7 @@ Popup.prototype.initialize = function(selectioner)
 	this._dialogFocusIndex = null;
 
 	this.element = $('<div />')
-		.addClass(Selectioner.Settings.cssPrefix + 'popup')
+		.addClass(this.selectioner.settings.cssPrefix + 'popup')
 		.css
 			({
 				visibility: 'hidden',
@@ -376,7 +383,6 @@ Popup.prototype.reposition = function()
 Popup.prototype.show = function()
 {
 	if (!this.selectioner.display.isDisabled() && 
-		!this.selectioner.display.isReadOnly() && 
 		!this.isShown())
 	{
 		// Hide the popup any time the window resizes.
@@ -594,36 +600,9 @@ Display.prototype.initialize = function(selectioner)
 	this.createPopup();
 };
 
-Display.prototype.updateInteractivity = function()
-{
-	var isDisabled = this.isDisabled();
-
-	if (isDisabled)
-	{
-		this.element.removeAttr('tabindex');		
-	}
-	else
-	{
-		this.element
-			.prop
-				(
-					'tabindex', 
-					this.selectioner.target.prop('tabindex')
-				);
-	}
-	
-	this.element.toggleClass('disabled', isDisabled);
-	this.element.toggleClass('readonly', this.isReadOnly());
-};
-
-Display.prototype.isReadOnly = function()
-{
-	return false;
-};
-
 Display.prototype.isDisabled = function()
 {
-	return this.selectioner.target.is('[disabled]');
+	return this.selectioner.target.prop('disabled');
 };
 
 Display.prototype.createDisplay = function()
@@ -632,12 +611,15 @@ Display.prototype.createDisplay = function()
 
 	this.render();
 	this.update();
+	
+	this.element
+		.prop(
+			'tabindex', 
+			this.selectioner.target.prop('tabindex'));
 
 	this.element
-		.addClass(Selectioner.Settings.cssPrefix + 'display');
-	
-	this.updateInteractivity();
-			
+		.addClass(this.selectioner.settings.cssPrefix + 'display');
+				
 	// Make sure we update when parent forms are reset.
 	this.selectioner
 		.target
@@ -774,14 +756,12 @@ Display.prototype.createPopup = function()
 					}					
 				}
 			)
-		.children()
-		.andSelf()
 		.on
 			(
 				'mousedown.selectioner',
 				function(event)
 				{
-					event.stopPropagation();
+					//event.stopPropagation();
 					if (popup.isShown())
 					{
 						popup.hide();
@@ -793,6 +773,7 @@ Display.prototype.createPopup = function()
 				}
 			);
 
+			
 	// Hide the pop-up whenever it loses focus to an
 	// element that is not part of the pop-up or display.
 	$(document)
@@ -812,7 +793,7 @@ Display.prototype.createPopup = function()
 			}
 		);
 
-	var cssClass = Selectioner.Settings.cssPrefix + 'visible';
+	var cssClass = this.selectioner.settings.cssPrefix + 'visible';
 
 	this.selectioner
 		.on
@@ -875,7 +856,7 @@ Display.prototype.getNoSelectionText = function()
 
 	if (!text)
 	{
-		text = Selectioner.Settings.noSelectionText;
+		text = this.selectioner.settings.noSelectionText;
 	}
 	
 	return text;	
@@ -980,9 +961,9 @@ ListBox.prototype.render = function()
 	this.element = $('<span />');
 		
 	this.textElement = $('<span />')
-		.addClass(Selectioner.Settings.cssPrefix + 'text');
+		.addClass(this.selectioner.settings.cssPrefix + 'text');
 	
-	var button = $('<span />').addClass(Selectioner.Settings.cssPrefix + 'button');
+	var button = $('<span />').addClass(this.selectioner.settings.cssPrefix + 'button');
 			
 	this.element
 		.append(button)
@@ -1074,7 +1055,7 @@ ComboBox.prototype.render = function()
 	var comboBox = this;
 	
 	this.textElement
-		.addClass(Selectioner.Settings.cssPrefix + 'text')
+		.addClass(this.selectioner.settings.cssPrefix + 'text')
 		.on(
 			'change.selectioner', 
 			function(e, data) 
@@ -1086,7 +1067,7 @@ ComboBox.prototype.render = function()
 			});
 	
 	var button = $('<span />')
-		.addClass(Selectioner.Settings.cssPrefix + 'button');
+		.addClass(this.selectioner.settings.cssPrefix + 'button');
 		
 	this.selectioner.on
 		(
@@ -1103,13 +1084,7 @@ ComboBox.prototype.render = function()
 					);
 			}
 		);
-		
-	if (this.selectioner.isDisabled)
-	{
-		this.element.addClass('disabled');
-		this.textElement.prop('disabled', true);
-	}
-	
+			
 	this.element
 		.append(button)
 		.append(this.textElement);
@@ -1185,7 +1160,7 @@ Display.prototype.getNoSelectionText = function()
 
 	if (!text)
 	{
-		text = Selectioner.Settings.noSelectionText;
+		text = this.selectioner.settings.noSelectionText;
 	}
 	
 	return text;	
@@ -1212,9 +1187,9 @@ DateBox.prototype.render = function()
 	this.element = $('<span />');
 		
 	this.textElement = $('<span />')
-		.addClass(Selectioner.Settings.cssPrefix + 'text');
+		.addClass(this.selectioner.settings.cssPrefix + 'text');
 	
-	var button = $('<span />').addClass(Selectioner.Settings.cssPrefix + 'button');
+	var button = $('<span />').addClass(this.selectioner.settings.cssPrefix + 'button');
 	
 	this.element
 		.append(button)
@@ -1324,7 +1299,7 @@ SingleSelect.prototype.update = function()
 						.addClass('none')
 						.append
 							(
-								$('<span />').text(Selectioner.Settings.noOptionText)
+								$('<span />').text(this.selectioner.settings.noOptionText)
 							)
 				);
 	}
@@ -1344,14 +1319,14 @@ SingleSelect.prototype.renderOption = function(option)
 	{
 		selectElement = $('<span />')
 			.addClass('disabled')
-			.text(text || Selectioner.Settings.emptyOptionText);
+			.text(text || this.selectioner.settings.emptyOptionText);
 	}
 	else
 	{
 		selectElement = $('<a />')
 			.attr('href', 'javascript:;')
 			.on('click', function(){ dialog.selectOption(option); })
-			.text(text || Selectioner.Settings.emptyOptionText);
+			.text(text || this.selectioner.settings.emptyOptionText);
 	}
 	
 	var listItem = $('<li />');
@@ -1382,7 +1357,7 @@ SingleSelect.prototype.renderGroup = function(group)
 			.text(group.attr('label'));
 
 	var options = $('<li />')
-		.addClass(Selectioner.Settings.cssPrefix + 'group-title')
+		.addClass(this.selectioner.settings.cssPrefix + 'group-title')
 		.append(groupTitle);
 	
 	var children = group.children();
@@ -1720,7 +1695,7 @@ MultiSelect.prototype.renderGroup = function(group)
 			.text(group.attr('label'));
 
 	var options = $('<li />')
-		.addClass(Selectioner.Settings.cssPrefix + 'group-title')
+		.addClass(this.selectioner.settings.cssPrefix + 'group-title')
 		.append(groupTitle);
 	
 	var children = group.children();
@@ -1860,7 +1835,7 @@ AutoComplete.prototype.update = function()
 		{
 			filteredOptions = filteredOptions.add(buildOption(option));
 			
-			if (filteredOptions.length > Selectioner.Settings.maxAutoCompleteItems)
+			if (filteredOptions.length > this.selectioner.settings.maxAutoCompleteItems)
 			{
 				break;
 			}
@@ -1873,7 +1848,7 @@ AutoComplete.prototype.update = function()
 			.addClass('none')
 			.append
 				(
-					$('<span />').text(Selectioner.Settings.noOptionText)
+					$('<span />').text(this.selectioner.settings.noOptionText)
 				);
 	}
 	
@@ -1997,7 +1972,7 @@ DateSelect.prototype.render = function()
 					event.preventDefault();
 				}
 			)
-		.addClass(Selectioner.Settings.cssPrefix + 'date')
+		.addClass(this.selectioner.settings.cssPrefix + 'date')
 		.on
 			(
 				'mousewheel wheel',
