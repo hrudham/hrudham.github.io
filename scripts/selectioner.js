@@ -452,15 +452,34 @@
 			{
 				// Hide the pop-up any time the window resizes.
 				var popup = this;
+				var displayElement = this.selectioner.display.element[0];
+				var id = this.selectioner.id;
+				
 				$(window)
 					.one
 					(
-						'resize.selectioner_' + this.selectioner.id,
+						'resize.selectioner_' + id,
 						function()
 						{
 							popup.hide();
 						}
 					);
+					
+				// Hide the pop-up whenever it loses focus to an
+				// element that is not part of the pop-up or display.
+				$(document).on(
+					'mousedown.selectioner_' + id + ' focusin.selectioner_' + id,
+					function(e)
+					{
+						if (popup.isShown() &&
+							e.target !== displayElement &&
+							!$.contains(displayElement, e.target) &&
+							e.target !== popup.element &&
+							!$.contains(popup.element, e.target))
+						{
+							popup.hide();
+						}
+					});
 			
 				this._isVisible = true;
 				this.update();
@@ -487,8 +506,8 @@
 					.parents()
 					.add(window)
 					.on(
-						'scroll.selectioner_' + this.selectioner.id, 
-						function() 
+						'scroll.selectioner_' + id, 
+						function(e) 
 						{
 							// Hide the pop-up whenever a scroll event
 							// on a parent element occurs. It's either 
@@ -509,9 +528,13 @@
 		{
 			if (this.isShown())
 			{
+				var id = this.selectioner.id;
+			
 				$(window).off(
-					'resize.selectioner_{id} scroll.selectioner_{id}'.replace(
-						/\{id\}/g, this.selectioner.id));
+					'resize.selectioner_' + id + ' scroll.selectioner_' + id);
+						
+				$(document).off(
+					'mousedown.selectioner_' + id + ' focusin.selectioner_' + id);
 			
 				this._isVisible = false;
 				this.element.css(
@@ -723,17 +746,39 @@
 			var targetId = this.selectioner.target.attr('id');
 			if (targetId !== undefined)
 			{
-				this.labels = $(document).on(
-					'click',
-					'label[for="' + targetId + '"]',
-					function ()
-					{
-						display.element.focus();
-					});
+				var eventName = 'click.' + targetId;
+			
+				$(document)
+					.off(eventName)
+					.on(
+						eventName,
+						'label[for="' + targetId + '"]',
+						function ()
+						{
+							display.focus();
+						});
 			}
 			
-			// Handle the key down event for things like arrows, escape, backspace, etc.
+			// Look for any labels that are an ancestor of 
+			// the underlying target, yet have no 'for' attribute,
+			// but are still targeting our underlying target,
+			// and make them focus on the display when clicked.
+			var wrappingLabel = this.selectioner
+				.target
+				.closest('label:not([for])')
+				.filter(
+					function()
+					{
+						return this.control === display.selectioner.target[0];
+					})
+				.on(
+					'click',
+					function ()
+					{
+						display.focus();
+					});	
 			
+			// Handle the key down event for things like arrows, escape, backspace, etc.
 			this.element.on(
 				'keydown',
 				function(e)
@@ -770,7 +815,7 @@
 				'keypress',
 				function(e)
 				{						
-					if (e.charCode && display.popup.isShown())
+					if (e.charCode)
 					{
 						var result = display.popup
 							.keyPress({ 
@@ -825,23 +870,6 @@
 						}
 					});
 
-			// Hide the pop-up whenever it loses focus to an
-			// element that is not part of the pop-up or display.
-			$(document)
-				.on(
-				'mousedown focusin',
-				function(e)
-				{
-					if (popup.isShown() &&
-						e.target !== displayElement[0] &&
-						!$.contains(displayElement[0], e.target) &&
-						e.target !== popup.element[0] &&
-						!$.contains(popup.element[0], e.target))
-					{
-						popup.hide();
-					}
-				});
-
 			var visibleCssClass = this.selectioner.settings.cssPrefix + 'visible';
 
 			this.selectioner
@@ -881,6 +909,14 @@
 			// This method should be explicitly overridden, but
 			// it is not required if it will never be updated.
 		};
+		
+		// Focus on the relevant control instead of the 
+		// underlying target element. This is often
+		// called when a label is clicked on.
+		Display.prototype.focus = function()
+		{
+			this.element.focus();
+		};
 
 		Display.prototype.getNoSelectionText = function()
 		{
@@ -897,7 +933,7 @@
 		{
 			if (!this.selectioner.target.is('select'))
 			{
-				throw new Error('ListBox expects it\'s underlying target element to to be a <select /> element');
+				throw new Error('Underlying target element is expected to be a <select /> element');
 			}
 		};
 
@@ -913,6 +949,7 @@
 			var button = $('<span />').addClass(this.selectioner.settings.cssPrefix + 'button');
 					
 			this.element = $('<span />')
+				.prop('title', this.selectioner.target.prop('title'))
 				.prop('tabindex', this.selectioner.target.prop('tabindex')) // Allow for tabbing and keyboard-related events to work.
 				.append(button)
 				.append(this.textElement);
@@ -965,7 +1002,10 @@
 			this.textElement.toggleClass('none', isEmpty);
 		};
 
-		var SingleSelect = Selectioner.Dialog.SingleSelect = function() {};
+		var SingleSelect = Selectioner.Dialog.SingleSelect = function() 
+		{
+			this.allowTabSelection = true;
+		};
 
 		SingleSelect.prototype = new Selectioner.Core.Dialog();
 
@@ -973,37 +1013,47 @@
 		{
 			if (!this.selectioner.target.is('select:not([multiple])'))
 			{
-				throw new Error('SingleSelect expects it\'s underlying target element to to be a <select /> element without a "multiple" attribute');
+				throw new Error('Underlying element is expected to be a <select /> element without a "multiple" attribute');
 			}
 		};
 
 		SingleSelect.prototype.render = function()
 		{
 			this.element = $('<ul />');
-			
 			this.bindEvents();
 		};
 		
 		SingleSelect.prototype.bindEvents = function()
 		{
 			var dialog = this;
-		
+			var lastScrollTop = null;
 			var element = this.element
 				.on(
 					'click', 
 					'li a',
 					function()
 					{
-						dialog.selectioner.target[0][this.getAttribute('data-index')].selected = true;
+						var option = dialog.selectioner.target[0][this.getAttribute('data-index')];
+						
+						if (!option.selected)
+						{
+							option.selected = true;
+							dialog.selectioner.target.trigger('change', { source: 'selectioner' });
+						}
+						
 						dialog.popup.hide();
-						dialog.selectioner.target.trigger('change', { source: 'selectioner' });
 					})
 				.on(
-					'mouseenter',
+					'mousemove',
 					'li',
 					function()
 					{	
-						dialog.highlight(this);
+						var scrollTop = dialog.popup.element.scrollTop();
+						if (scrollTop === lastScrollTop)
+						{
+							dialog.highlight(this);
+						}
+						lastScrollTop = scrollTop;
 					});
 		};
 		
@@ -1052,17 +1102,28 @@
 					// an <option /> without a value for it's no-option
 					// text, other dialogs that inherit from it often do, 
 					// such as in the case of the combo-select.
-					var noOptionText = this.selectioner
+					var option = this.selectioner
 						.target
-						.find('option[value=""], option:empty:not([value])')
-						.text();
+						.find('option[value=""], option:empty:not([value])');
 							
-					var text = noOptionText || this.selectioner.settings.noOptionText;
-							
-					results += '<li class="none"><span>' + text + '</span></li>';
+					var text = option.text() || this.selectioner.settings.noOptionText;
+					
+					var titleAttribute = '';
+					if (option.length > 0)
+					{
+						var title = option[0].getAttribute('title');
+						if (title)
+						{
+							titleAttribute = ' title="' + title.replace(/"/g, '&quot;') + '" ';
+						}
+					}
+
+					results += '<li class="none"' + titleAttribute + '><span>' + text + '</span></li>';
 				}
-				
+
 				this.element.html(results);
+
+				this.scrollToHighlightedOption();
 			}
 		};
 
@@ -1088,18 +1149,37 @@
 			else
 			{
 				itemHtml = '<a href="javascript:;" data-index="' + option.index + '">' + text + '</a>';
-			}		
+			}
+			
+			if (option.selected)
+			{
+				cssClass.push('highlight');
+			}
 
-			return '<li class="' + cssClass.join(' ') + '">' + itemHtml + '</li>';
+			var titleAttribute = '';
+			var title = option.getAttribute('title');
+			if (title)
+			{
+				titleAttribute = ' title="' + title.replace(/"/g, '&quot;') + '"';
+			}
+
+			return '<li class="' + cssClass.join(' ') + '"' + titleAttribute + '>' + itemHtml + '</li>';
 		};
 
 		// Render an the equivalent control that represents an 
 		// <optgroup /> element for the underlying <select /> element. 
 		SingleSelect.prototype.renderGroup = function(group)
-		{					
+		{			
+			var titleAttribute = '';
+			var title = group.getAttribute('title');
+			if (title)
+			{
+				titleAttribute = ' title="' + title.replace(/"/g, '&quot;') + '"';
+			}
+		
 			var results = '<li class="' + 
 				this.selectioner.settings.cssPrefix + 
-				'group-title"><span>' + 
+				'group-title"' + titleAttribute + '><span>' + 
 				group.label + 
 				'</span></li>';
 			
@@ -1132,21 +1212,18 @@
 		};
 
 		SingleSelect.prototype.highlight = function(item)
-		{
-			var dialog = this;		
-			var target = $(item);
-						
-			if (!target.hasClass('highlight') && 
-				dialog.getSelectableOptions().filter(item).length > 0)
+		{						
+			if ((' ' + item.className + ' ').indexOf(' highlight ') === -1 && 
+				this.getSelectableOptions().filter(item).length > 0)
 			{
-				dialog.element.find('li').removeClass('highlight');
-				target.addClass('highlight');
+				this.element.find('li').removeClass('highlight');
+				$(item).addClass('highlight');
 			}
 		};
 		
 		// Highlight the next or previous item.
 		SingleSelect.prototype.highlightAdjacentOption = function(isNext)
-		{
+		{		
 			var isHighlighted = false;
 			var items = this.getSelectableOptions();
 			
@@ -1274,7 +1351,8 @@
 						break;
 						
 					case 32: // Space
-						if (!this.keyPressFilter && simpleEvent.target === this.selectioner.display.element[0])
+						if (!this.keyPressFilter && 
+							simpleEvent.target === this.selectioner.display.element[0])
 						{
 							this.selectHighlightedOption();
 							simpleEvent.preventDefault();
@@ -1282,6 +1360,14 @@
 						}
 						break;
 						 
+					case 9:  // Tab
+						if (this.allowTabSelection)
+						{
+							this.selectHighlightedOption();
+							result.handled = true;
+						}
+						break;
+					
 					case 13: // Enter / Return
 						this.selectHighlightedOption();
 						simpleEvent.preventDefault();
@@ -1313,16 +1399,18 @@
 					{
 						dialog.keyPressFilter = '';
 					},
-					400);
+					600);
 					
 				// Find the first option that satisfies   
-				// the filter, and highlight it.
+				// the filter, is not empty (or "none"), 
+				// and highlight it.
 				var options = this.getSelectableOptions();
 				var isSet = false;
 				for (var i = 0, length = options.length; i < length; i++)
 				{
 					var option = $(options[i]);
-					if (option.text().toUpperCase().indexOf(this.keyPressFilter) === 0)
+					if (!option.hasClass('none') &&
+						option.text().toUpperCase().indexOf(this.keyPressFilter) === 0)
 					{
 						options.removeClass('highlight');
 						option.addClass('highlight');
@@ -1368,7 +1456,10 @@
 			return this;
 		};
 
-		var MultiSelect = Selectioner.Dialog.MultiSelect = function() {};
+		var MultiSelect = Selectioner.Dialog.MultiSelect = function() 
+		{
+			this.allowTabSelection = false;
+		};
 
 		MultiSelect._inputIdIndex = 0;
 
@@ -1378,7 +1469,7 @@
 		{
 			if (!this.selectioner.target.is('select[multiple]'))
 			{
-				throw new Error('MultiSelect expects it\'s underlying target element to to be a <select /> element with a "multiple" attribute');
+				throw new Error('Underlying element is expected to be a <select /> element with a "multiple" attribute');
 			}
 		};
 		
@@ -1435,7 +1526,14 @@
 				(option.selected ? 'checked="checked" ' : '') + 
 				(option.disabled ? 'disabled="disabled" ' : '') + '/>';
 				
-			return '<li><label for="' + checkboxId + '" ' + (option.disabled ? 'class="disabled"' : '') + '>' + 
+			var titleAttribute = '';
+			var title = option.getAttribute('title');
+			if (title)
+			{
+				titleAttribute = ' title="' + title.replace(/"/g, '&quot;') + '"';
+			}
+				
+			return '<li' + titleAttribute + '><label for="' + checkboxId + '" ' + (option.disabled ? 'class="disabled"' : '') + '>' + 
 				checkbox + 
 				'<span>' + option.text + '</span>' + 
 				'</label></li>';
@@ -1481,12 +1579,92 @@
 		var DateBox = Selectioner.Display.DateBox = function() {};
 
 		DateBox.prototype = new Selectioner.Core.Display();
+		
+		DateBox.Utility = 
+		{
+			dateStringToDate: function(dateString)
+			{
+				if (dateString !== '')
+				{
+					var dateParts = dateString.match(/(\d+)/g);
+					
+					if (dateParts &&
+						dateParts.length === 3 &&
+						dateParts[0].length === 4 &&
+						dateParts[1].length === 2 &&
+						dateParts[2].length === 2)
+					{
+						return new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
+					}
+				}
+				
+				return null;
+			},
+			
+			dateStringToValue: function(dateString)
+			{
+				if (dateString !== '')
+				{
+					var date = DateBox.Utility.dateStringToDate(dateString);
+				
+					if (window.Globalize)
+					{
+						var globalizeDate = Globalize.parseDate(dateString);
+						
+						if (globalizeDate)
+						{
+							date = globalizeDate;
+						}
+					}
+					
+					return DateBox.Utility.dateToString(date);
+				}
+				
+				return '';
+			},
+			
+			dateToString: function(date)
+			{
+				if (date)
+				{
+					var day = date.getDate().toString();
+					var month = (date.getMonth() + 1).toString();
+					var year = date.getFullYear().toString();
+					
+					if (day.length == 1) day = '0' + day;
+					if (month.length == 1) month = '0' + month;
+					
+					return year + '-' + month + '-' + day;
+				}
+				
+				return '';
+			},
+			
+			// Obtains the the string representation of the date provided.
+			dateToLocaleString: function(date)
+			{
+				if (!date)
+				{
+					return '';
+				}
+			
+				if (window.Globalize)
+				{
+					// Globalize is defined, so use it to output a 
+					// short-date in the culturally correct format.
+					// https://github.com/jquery/globalize
+					return Globalize.format(date, 'd');
+				}
+				
+				return DateBox.Utility.dateToString(date);
+			}
+		};
 
 		DateBox.prototype.validateTarget = function()
 		{
 			if (!this.selectioner.target.is('input[type="date"]'))
 			{
-				throw new Error('DateBox expects it\'s underlying target element to to be a <input type="date" /> element');
+				throw new Error('Underlying target element is expected to be a <input type="date" /> element');
 			}
 		};
 
@@ -1497,59 +1675,73 @@
 
 		DateBox.prototype.render = function()
 		{
+			var dateBox = this;
+		
 			this.cssClass = this.selectioner.settings.cssPrefix  + 'date-box';
 		
-			this.textElement = $('<span />')
-				.addClass(this.selectioner.settings.cssPrefix + 'text');
+			this.textElement = $('<input type="text" />')
+				.addClass(this.selectioner.settings.cssPrefix + 'text')
+				.attr('placeholder', this.selectioner.target.attr('placeholder') || 'Select a date')
+				.on(
+					'change', 
+					function() 
+					{ 
+						dateBox.selectioner.target.val(
+							DateBox.Utility.dateStringToValue(
+								this.value))
+							.trigger('change');
+					})
+				.on(
+					'keyup',
+					function()
+					{
+						var dateValue = DateBox.Utility.dateStringToValue(this.value);
+						
+						if (dateValue && 
+							this.value.length === 10)
+						{
+							dateBox.selectioner.target.val(dateValue).trigger('change');
+						}
+					});
 			
 			var button = $('<span />').addClass(this.selectioner.settings.cssPrefix + 'button');
 			
 			this.element = $('<span />')
+				.prop('title', this.selectioner.target.prop('title'))
 				.prop('tabindex', this.selectioner.target.prop('tabindex')) // Allow for tabbing and keyboard-related events to work.
 				.append(button)
 				.append(this.textElement);
+				
+			this.textElement
+				.on(
+					'focus',
+					function(ev)
+					{
+						dateBox.textElement.one(
+							'click', 
+							function(e)
+							{
+								dateBox.textElement.select();
+							});
+					});
 		};
 
 		DateBox.prototype.update = function()
 		{
-			var dateValue = this.selectioner.target.val();
-
-			if (dateValue !== '')
+			var value = DateBox.Utility.dateToLocaleString(
+				DateBox.Utility.dateStringToDate(
+					this.selectioner.target.val()));
+		
+			// Stop resetting the cursor position when 
+			// entering a date via the keyboard.
+			if (this.textElement.val() !== value)
 			{
-				var datePart = dateValue.match(/(\d+)/g);
-				
-				// Remember that months are zero-based
-				this.textElement
-					.removeClass('none')
-					.text(
-						this.getDateText(
-							new Date(datePart[0], datePart[1] - 1, datePart[2])));
-			}
-			else
-			{
-				this.textElement
-					.addClass('none')
-					.text(this.selectioner.target.attr('placeholder') || 'Select a date');
-			}
-		};
-
-		// Obtains the the string representation of the date provided.
-		DateBox.prototype.getDateText = function(date)
-		{
-			if (window.Globalize)
-			{
-				// Globalize is defined, so use it to output a 
-				// short-date in the culturally correct format.
-				// https://github.com/jquery/globalize
-				return Globalize.format(date, 'd');
-			}
-			else
-			{
-				return date.toLocaleDateString();
+				this.textElement.val(value);
 			}
 		};
 // Note that you may optionally include the excellent Globalize library in order 
 // to get culturally formatted dates. See https://github.com/jquery/globalize
+
 
 		var DateSelect = Selectioner.Dialog.DateSelect = function() {};
 
@@ -1628,7 +1820,7 @@
 		{
 			if (!this.selectioner.target.is('input[type="date"]'))
 			{
-				throw new Error('DateBox expects it\'s underlying target element to to be a <input type="date" /> element');
+				throw new Error('Underlying element is expected to be an <input type="date" /> element');
 			}
 		};
 
@@ -1917,13 +2109,7 @@
 						this.addDays(1);
 						simpleEvent.preventDefault();
 						break;
-					
-					case 8: // Backspace
-						this.setCurrentDate(null);
-						this.popup.hide();
-						simpleEvent.preventDefault();
-						break;
-						
+											
 					case 32: // Space
 					case 13: // Enter / Return
 						this.setCurrentDate(this.getCurrentDate());
@@ -1961,7 +2147,12 @@
 		{
 			if (!this.selectioner.target.is('select:not([multiple])'))
 			{
-				throw new Error('ComboBox expects it\'s underlying target element to to be a <select /> element without a "multiple" attribute');
+				throw new Error('Underlying element is expected to be a <select /> element without a "multiple" attribute');
+			}
+			
+			if (!this.selectioner.target.next().is('input[type="text"]'))
+			{
+				throw new Error('The element to follow the underlying <select /> is expected to be an <input type="text" />');
 			}
 		};
 		
@@ -1970,12 +2161,7 @@
 			this.cssClass = this.selectioner.settings.cssPrefix  + 'combo-box';
 		
 			this.textElement = this.selectioner.target.next();
-			
-			if (!this.textElement.is('input[type="text"]'))
-			{
-				throw new Error('ComboBox expects the element to follow it\'s target <select /> to be an <input type="text" />');
-			}
-			
+						
 			var noSelectionText = this.getNoSelectionText();
 			
 			if (noSelectionText !== null)
@@ -2011,25 +2197,20 @@
 				.addClass(this.selectioner.settings.cssPrefix + 'button');
 				
 			this.element = $('<span />')
+				.prop('title', this.selectioner.target.prop('title'))
 				.append(button)
 				.append(this.textElement);
 				
-			comboBox.element
+			comboBox.textElement
 				.on(
 					'focus',
 					function(ev)
 					{
-						comboBox.element.one(
-							'click keyup', 
+						comboBox.textElement.one(
+							'click', 
 							function(e)
 							{
-								if (e.which !== 9 || !e.shiftKey)
-								{
-									// If we are not navigating backwards via 
-									// SHIFT+TAB, then select the text in this 
-									// combo-box's text element.
-									comboBox.textElement.select();
-								}
+								comboBox.textElement.select();
 							});
 					});
 		};
@@ -2040,7 +2221,7 @@
 			// the drop-down, and select it if it does.
 			// If it doesn't match an option, select the 
 			// option with no value.
-			var display = this;
+			var filterText = this.textElement.val().toUpperCase();
 			
 			var option = this.selectioner
 				.target
@@ -2048,7 +2229,7 @@
 				.filter(
 					function() 
 					{ 
-						return this.text.toUpperCase() === display.textElement.val().toUpperCase(); 
+						return this.text.toUpperCase() === filterText; 
 					});
 			
 			if (option.length != 1)
@@ -2065,24 +2246,15 @@
 
 		ComboBox.prototype.update = function()
 		{
-			var selectedOption = this.selectioner.target.find('option:selected');
+			var value = this.selectioner.target.find('option:selected').text();
 			
-			if (selectedOption.length === 0)
+			if (value !== '')
 			{
-				this.textElement.addClass('none');
-			}
-			else
-			{
-				this.textElement.removeClass('none');
-				var value = selectedOption.text();
-				
-				if (value !== '')
-				{
-					this.textElement.val(value)
-						.trigger(
-							'change',
-							{ source: 'selectioner' });
-				}
+				this.textElement
+					.val(value)
+					.trigger(
+						'change',
+						{ source: 'selectioner' });
 			}
 		};
 
@@ -2102,8 +2274,16 @@
 				this.textElement.attr('placeholder') ||
 				this.selectioner.settings.noSelectionText);
 		};
+		
+		ComboBox.prototype.focus = function()
+		{
+			this.textElement.focus();
+		};
 
-		var ComboSelect = Selectioner.Dialog.ComboSelect = function() {};
+		var ComboSelect = Selectioner.Dialog.ComboSelect = function() 
+		{
+			this.allowTabSelection = false;
+		};
 
 		ComboSelect.prototype = new Selectioner.Dialog.SingleSelect();
 
@@ -2111,7 +2291,7 @@
 		{
 			if (!this.selectioner.target.is('select:not([multiple])'))
 			{
-				throw new Error('ComboSelect expects it\'s underlying target element to to be a <select /> element without a "multiple" attribute');
+				throw new Error('Underlying element is expected to be a <select /> element without a "multiple" attribute');
 			}
 		};
 		
@@ -2143,16 +2323,18 @@
 			// Do not filter on enter / return or tab.
 			if (simpleEvent.key != 13 && simpleEvent.key != 9)
 			{
+				this.popup.show();
+			
 				var filter = this.selectioner.display.textElement.val().toUpperCase() + 
 					String.fromCharCode(simpleEvent.key).toUpperCase();
 					
-				var options = this.getSelectableOptions();
+				var options = this.getSelectableOptions().removeClass('highlight');
+				
 				for (var i = 0, length = options.length; i < length; i++)
 				{
 					var option = $(options[i]);
 					if (option.text().toUpperCase().indexOf(filter) === 0)
 					{
-						options.removeClass('highlight');
 						option.addClass('highlight');
 						this.scrollToHighlightedOption();
 						break;
@@ -2196,7 +2378,10 @@
 				this.selectioner.settings.typeToSearchText);
 		};
 
-		var FilteredSelect = Selectioner.Dialog.FilteredSelect = function() {};
+		var FilteredSelect = Selectioner.Dialog.FilteredSelect = function() 
+		{
+			this.allowTabSelection = false;
+		};
 
 		FilteredSelect.prototype = new Selectioner.Dialog.SingleSelect();
 
@@ -2204,7 +2389,7 @@
 		{
 			if (!this.selectioner.target.is('select:not([multiple])'))
 			{
-				throw new Error('ComboSelect expects it\'s underlying target element to to be a <select /> element without a "multiple" attribute');
+				throw new Error('Underlying element is expected to be a <select /> element without a "multiple" attribute');
 			}
 		};
 
@@ -2217,12 +2402,7 @@
 				.display
 				.element
 				.find('input[type="text"]');
-				
-			if (this.textElement.length === 0)
-			{
-				throw new Error('FilteredSelect expects the Display to contain an <input type="text" /> element');
-			}
-		
+						
 			Selectioner.Dialog.SingleSelect.prototype.render.apply(this, arguments);
 			
 			this.update();
@@ -2239,7 +2419,8 @@
 				function(e, data)
 				{
 					if ((!data || data.source != 'selectioner') && 
-						e.which !== 27) // e.which == 27 == Escape key pressed.
+						e.which != 13 &&	// Enter
+						e.which !== 27)		// Escape
 					{
 						dialog.update();
 						if (!dialog.popup.isShown())
@@ -2314,16 +2495,33 @@
 		FilteredSelect.prototype.getFilteredOptions = function()
 		{
 			var filteredOptions = '';
+			var filterText = this.textElement.val().toLowerCase();
 			var count = 0;
 		
 			var children = this.selectioner.target.find('option');
 					
+			var wordFilter = function(text)
+			{ 
+				return text !== '' && text.indexOf(filterText) === 0;
+			};
+					
 			for (var i = 0, length = children.length; i < length; i++)
 			{
 				var option = children[i];
-				var text = option.text.toLowerCase();
 				
-				if (text !== '' && text.indexOf(this.textElement.val().toLowerCase()) === 0)
+				// Split the text on spaces, so that we can match on 
+				// any word that starts with the filter criteria.
+				var optionText = option.text.toLowerCase();
+				var textParts = [];
+				var spaceIndex = 0;
+				
+				while(spaceIndex > -1)
+				{
+					textParts.push(optionText.substring(spaceIndex === 0 ? 0 : spaceIndex + 1));
+					spaceIndex = optionText.indexOf(' ', spaceIndex + 1);
+				}
+			
+				if (textParts.filter(wordFilter).length > 0)
 				{
 					filteredOptions += this.renderOption(option);
 					count++;

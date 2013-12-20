@@ -19,6 +19,7 @@
   text-align: left;
   margin-top: -1px;
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
   outline: none;
   top: 0px;
   /* Stop page from overflowing when the control is created. */
@@ -45,7 +46,12 @@
 }
 .select-popup > ul li.highlight a,
 .select-popup > ul li.highlight label {
-  background-color: #F5F5F5;
+  background-color: #39F;
+  color: #FFF;
+}
+.select-popup > ul li.highlight.none a,
+.select-popup > ul li.highlight.none label {
+  color: #DDD;
 }
 .select-popup > ul input[disabled] + span,
 .select-popup > ul .disabled {
@@ -137,14 +143,17 @@ textarea[readonly] + .select-display > .select-text {
   /* Stop IE10 from picking sub-pixel values by setting a round number ourselves. */
 
   display: inline-block;
-  min-width: 133px;
+  min-width: 175px;
   text-align: left;
   padding: 1px 24px 1px 3px;
   margin: 0px;
   vertical-align: middle;
   outline: none;
+  font-weight: normal;
   background-color: transparent;
   /* for text inputs, which usually have a white background. */
+
+  /* Remove the "x" from IE's text inputs */
 
 }
 .select-display > .select-text:focus {
@@ -152,6 +161,9 @@ textarea[readonly] + .select-display > .select-text {
   -moz-box-shadow: none;
   box-shadow: none;
   outline: none;
+}
+.select-display > .select-text::-ms-clear {
+  display: none;
 }
 .select-display > span.select-text {
   cursor: pointer;
